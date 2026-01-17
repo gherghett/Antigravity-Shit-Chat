@@ -35,13 +35,21 @@ A lightweight web server provides the mobile UI:
 
 ## Setup
 
-### 1. Start Antigravity with CDP
+### 1. Start Antigravity or Cursor with CDP
 
-Start Antigravity with Chrome DevTools Protocol enabled:
+Start Antigravity or Cursor with Chrome DevTools Protocol enabled:
 
+Antigravity:
 ```bash
 antigravity . --remote-debugging-port=9000
 ```
+
+Cursor:
+```bash
+cursor --remote-debugging-port=9000
+```
+
+You may see a warning about `remote-debugging-port` not being a known option. That is fine; Electron still passes it to Chromium. Make sure the AI Chat panel is open.
 
 ### 2. Install Dependencies
 
