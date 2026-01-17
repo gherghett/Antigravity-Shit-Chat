@@ -194,23 +194,95 @@ async function captureSnapshot(cdp: CDPConnection): Promise<Snapshot | null> {
         const inputContainer = clone.querySelector('[contenteditable="true"]')?.closest('div[id^="cascade"] > div');
         if (inputContainer) inputContainer.remove();
         
-        // Convert canvas elements to images (for terminal output)
-        const originalCanvases = cascade.querySelectorAll('canvas');
-        const clonedCanvases = clone.querySelectorAll('canvas');
-        originalCanvases.forEach((originalCanvas, i) => {
+        // Extract terminal text from xterm buffer (WebGL canvas can't be captured)
+        // Find all terminal containers and replace canvas with text content
+        const terminalContainers = clone.querySelectorAll('.terminal.xterm');
+        const originalTerminals = cascade.querySelectorAll('.terminal.xterm');
+        
+        originalTerminals.forEach((originalTerminal, i) => {
             try {
-                const clonedCanvas = clonedCanvases[i];
-                if (clonedCanvas && originalCanvas.width > 0 && originalCanvas.height > 0) {
-                    const dataUrl = originalCanvas.toDataURL('image/png');
-                    const img = document.createElement('img');
-                    img.src = dataUrl;
-                    img.style.cssText = clonedCanvas.getAttribute('style') || '';
-                    img.style.width = clonedCanvas.style.width || (originalCanvas.width + 'px');
-                    img.style.height = clonedCanvas.style.height || (originalCanvas.height + 'px');
-                    clonedCanvas.parentNode?.replaceChild(img, clonedCanvas);
+                const clonedTerminal = terminalContainers[i];
+                if (!clonedTerminal) return;
+                
+                // Find xterm instance via wrapper.xterm property
+                const wrapper = originalTerminal.closest('.terminal-wrapper');
+                const term = wrapper?.xterm;
+                if (term && term.buffer && term.buffer.active) {
+                    const buffer = term.buffer.active;
+                    const allLines = [];
+                    // Get all valid lines first
+                    for (let row = 0; row < buffer.length; row++) {
+                        const line = buffer.getLine(row);
+                        if (line) {
+                            allLines.push(line.translateToString(true));
+                        }
+                    }
+
+                    // Smart Tail:
+                    // 1. Trim empty lines from the END
+                    while (allLines.length > 0 && allLines[allLines.length - 1].trim() === '') {
+                        allLines.pop();
+                    }
+                    
+                    // Filter out garbage lines that might contain just control characters or weird spacing
+                    // We also show last 60 lines max
+                    let linesToShow = allLines;
+                    if (linesToShow.length > 60) {
+                        linesToShow = linesToShow.slice(-60);
+                    }
+                    
+                    // 2. Trim empty lines AND lone prompts from the START of the slice
+                    // This fixes the "$ $ %" artifacts reported by the user
+                    const promptOnlyRegex = /^[$%>#]\s*$/;
+                    while (linesToShow.length > 0 && (linesToShow[0].trim() === '' || promptOnlyRegex.test(linesToShow[0].trim()))) {
+                        linesToShow.shift();
+                    }
+
+                    // Create a pre element with terminal text
+                    const pre = document.createElement('pre');
+                    pre.textContent = linesToShow.join(String.fromCharCode(10));
+                    // Reset everything on the pre
+                    pre.style.cssText = 'display:block; margin:0; padding:8px 12px; font-family:monospace; font-size:12px; line-height:1.4; background:#181818; color:#d4d4d4; overflow-x:auto; white-space:pre-wrap; word-break:break-all; border:none; width:100%; box-sizing:border-box;';
+                    
+                    // AGGRESSIVE REPLACEMENT:
+                    // Find the wrapper in the CLONED DOM and replace its ENTIRE content with our pre.
+                    // This kills all xterm layout issues, scrollbars, viewports, etc.
+                    const clonedWrapper = clonedTerminal.closest('.terminal-wrapper') || clonedTerminal.parentNode;
+                    
+                    if (clonedWrapper) {
+                        // Clear everything
+                        clonedWrapper.innerHTML = '';
+                        clonedWrapper.appendChild(pre);
+                        
+                        // Reset wrapper styles to just fit content
+                        // @ts-ignore
+                        clonedWrapper.style.height = 'auto';
+                        // @ts-ignore
+                        clonedWrapper.style.minHeight = '0';
+                        // @ts-ignore
+                        clonedWrapper.style.display = 'block';
+                        // @ts-ignore
+                        clonedWrapper.style.padding = '0';
+                        // @ts-ignore
+                        clonedWrapper.className = 'terminal-output-captured'; // Remove conflicting classes
+                    }
+                    
+                    // Also clean up the parent component-shared-terminal if it exists
+                    const termContainer = clonedWrapper.parentNode;
+                    if (termContainer && termContainer.className.includes('component-shared-terminal')) {
+                         // @ts-ignore
+                         termContainer.style.height = 'auto';
+                         // @ts-ignore
+                         termContainer.style.minHeight = '0';
+                         // @ts-ignore
+                         termContainer.style.display = 'block';
+                    }
                 }
             } catch (e) { }
         });
+        
+        // Also try to remove any remaining canvases (they'll be empty anyway)
+        clone.querySelectorAll('canvas').forEach(c => c.remove());
         
         const html = clone.outerHTML;
         
