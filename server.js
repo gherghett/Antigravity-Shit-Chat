@@ -141,6 +141,8 @@ async function captureSnapshot(cdp) {
 // Inject message into Antigravity
 async function injectMessage(cdp, text) {
     const EXPRESSION = `(async () => {
+        const text = ${JSON.stringify(text)};
+        
         const cancel = document.querySelector('[data-tooltip-id="input-send-button-cancel-tooltip"]');
         if (cancel && cancel.offsetParent !== null) return { ok:false, reason:"busy" };
 
@@ -154,11 +156,11 @@ async function injectMessage(cdp, text) {
         document.execCommand?.("delete", false, null);
 
         let inserted = false;
-        try { inserted = !!document.execCommand?.("insertText", false, "${text.replace(/"/g, '\\"').replace(/\n/g, '\\n')}"); } catch {}
+        try { inserted = !!document.execCommand?.("insertText", false, text); } catch {}
         if (!inserted) {
-            editor.textContent = "${text.replace(/"/g, '\\"').replace(/\n/g, '\\n')}";
-            editor.dispatchEvent(new InputEvent("beforeinput", { bubbles:true, inputType:"insertText", data:"${text.replace(/"/g, '\\"').replace(/\n/g, '\\n')}" }));
-            editor.dispatchEvent(new InputEvent("input", { bubbles:true, inputType:"insertText", data:"${text.replace(/"/g, '\\"').replace(/\n/g, '\\n')}" }));
+            editor.textContent = text;
+            editor.dispatchEvent(new InputEvent("beforeinput", { bubbles:true, inputType:"insertText", data: text }));
+            editor.dispatchEvent(new InputEvent("input", { bubbles:true, inputType:"insertText", data: text }));
         }
 
         await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
