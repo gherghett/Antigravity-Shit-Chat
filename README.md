@@ -52,8 +52,15 @@ npm install
 
 ### 3. Start the Monitor
 
+**Development mode** (with hot reload):
 ```bash
-node server.js
+npm run dev
+```
+
+**Production mode**:
+```bash
+npm run build
+npm start
 ```
 
 ### 4. Access from Mobile
