@@ -22,42 +22,82 @@
             overflow: hidden;
         }
 
-        /* Header */
-        .header {
-            background: #2a2a2a;
-            padding: 12px 16px;
-            border-bottom: 1px solid #3a3a3a;
+        /* Chat Container */
+        .chat-container {
+            flex: 1;
+            overflow-y: auto;
+            overflow-x: hidden;
+            position: relative;
+            -webkit-overflow-scrolling: touch;
+        }
+
+        .chat-content {
+            min-height: 100%;
+            padding: 16px;
+        }
+
+        .loading {
             display: flex;
-            justify-content: space-between;
+            flex-direction: column;
+            justify-content: center;
             align-items: center;
+            height: 100%;
+            color: #666;
+            gap: 12px;
+        }
+
+        .loading .spinner {
+            width: 24px;
+            height: 24px;
+            border: 2px solid #333;
+            border-top-color: #3b82f6;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        /* Input Section */
+        .input-section {
+            background: #2a2a2a;
+            border-top: 1px solid #3a3a3a;
+            padding: 12px 16px;
             flex-shrink: 0;
         }
 
-        .header h1 {
-            font-size: 16px;
-            font-weight: 600;
-        }
-
-        .controls {
+        .input-wrapper {
             display: flex;
             gap: 8px;
-            align-items: center;
         }
 
-        .status-indicator {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            background: #666;
-            transition: background 0.3s;
+        textarea {
+            flex: 1;
+            background: #1a1a1a !important;
+            border: 1px solid #3a3a3a !important;
+            color: #fff !important;
+            padding: 16px 20px !important;
+            border-radius: 12px !important;
+            font-size: 15px !important;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+            resize: none;
+            min-height: 52px;
+            max-height: 140px;
+            line-height: 1.5 !important;
+            box-sizing: border-box !important;
         }
 
-        .status-indicator.connected {
-            background: #4ade80;
+        textarea::placeholder {
+            color: #666;
         }
 
-        .status-indicator.paused {
-            background: #fbbf24;
+        textarea:focus {
+            outline: none;
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
         }
 
         button {
@@ -83,82 +123,6 @@
         button.primary {
             background: #3b82f6;
             border-color: #2563eb;
-        }
-
-        /* Chat Container */
-        .chat-container {
-            flex: 1;
-            overflow-y: auto;
-            overflow-x: hidden;
-            position: relative;
-            -webkit-overflow-scrolling: touch;
-        }
-
-        .chat-content {
-            min-height: 100%;
-            padding: 16px;
-        }
-
-        .loading {
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100%;
-            color: #666;
-        }
-
-        .pause-banner {
-            position: sticky;
-            top: 0;
-            background: #fbbf24;
-            color: #000;
-            padding: 8px 16px;
-            text-align: center;
-            font-size: 13px;
-            font-weight: 500;
-            z-index: 100;
-            display: none;
-        }
-
-        .pause-banner.show {
-            display: block;
-        }
-
-        /* Input Section */
-        .input-section {
-            background: #2a2a2a;
-            border-top: 1px solid #3a3a3a;
-            padding: 12px 16px;
-            flex-shrink: 0;
-        }
-
-        .input-wrapper {
-            display: flex;
-            gap: 8px;
-        }
-
-        textarea {
-            flex: 1;
-            background: #1a1a1a;
-            border: 1px solid #3a3a3a;
-            color: #fff !important;
-            /* Force white text */
-            padding: 10px 12px;
-            border-radius: 8px;
-            font-size: 14px;
-            font-family: inherit;
-            resize: none;
-            min-height: 44px;
-            max-height: 120px;
-        }
-
-        textarea::placeholder {
-            color: #888;
-        }
-
-        textarea:focus {
-            outline: none;
-            border-color: #3b82f6;
         }
 
         .send-btn {
@@ -190,27 +154,26 @@
             display: flex;
         }
 
-        /* Responsive */
         @media (max-width: 640px) {
-            .header h1 {
-                font-size: 14px;
+            .input-section {
+                padding: 8px 12px;
             }
         }
     </style>
 </head>
 
 <body>
-    <!-- Chat Container -->
     <div class="chat-container" id="chatContainer">
         <div class="chat-content" id="chatContent">
-            <div class="loading">Loading chat...</div>
+            <div class="loading">
+                <div class="spinner"></div>
+                <span>Connecting...</span>
+            </div>
         </div>
     </div>
 
-    <!-- Scroll to Bottom FAB -->
     <button class="fab" id="scrollToBottom">↓</button>
 
-    <!-- Input Section -->
     <div class="input-section">
         <div class="input-wrapper">
             <textarea id="messageInput" placeholder="Type a message..." rows="1"></textarea>
@@ -225,11 +188,76 @@
         const sendBtn = document.getElementById('sendBtn');
         const scrollToBottomBtn = document.getElementById('scrollToBottom');
 
-        let autoRefreshEnabled = true;
         let userIsScrolling = false;
-        let lastScrollPosition = 0;
         let ws = null;
-        let idleTimer = null;
+
+        // Render snapshot
+        function renderSnapshot(data) {
+            const scrollPos = chatContainer.scrollTop;
+            const isNearBottom = chatContainer.scrollHeight - chatContainer.scrollTop - chatContainer.clientHeight < 100;
+
+            // Apply Antigravity's theme class to our html element
+            if (data.themeClass) {
+                document.documentElement.className = data.themeClass;
+            }
+            if (data.themeAttr) {
+                document.documentElement.setAttribute('data-theme', data.themeAttr);
+            }
+
+            // Apply body background and color from Antigravity
+            const bodyBg = data.bodyBg || '#1a1a1a';
+            const bodyColor = data.bodyColor || '#e0e0e0';
+            document.body.style.backgroundColor = bodyBg;
+            document.body.style.color = bodyColor;
+
+            chatContent.innerHTML = `
+                <style>
+                    /* Apply color scheme from Antigravity */
+                    :root, html, body, #chatContent, #chatContent * {
+                        color-scheme: ${data.colorScheme || 'dark'} !important;
+                    }
+                    
+                    /* Inject all CSS from Antigravity */
+                    ${data.css}
+                    
+                    /* Override positioning only */
+                    * { position: static !important; }
+                    #cascade { position: relative !important; }
+                    
+                    /* Use captured text color from Antigravity (works for any theme) */
+                    #cascade, #cascade * {
+                        color: ${data.bodyColor || 'inherit'};
+                    }
+                    
+                    /* Code blocks - keep dark background */
+                    pre, code, #cascade pre, #cascade code,
+                    [class*="hljs"], [class*="shiki"] {
+                        background-color: #1e1e1e !important;
+                        color: #d4d4d4 !important;
+                    }
+                    pre code { background-color: transparent !important; }
+                    
+                    /* Hide broken vscode-file:// icons */
+                    img[src^="vscode-file://"] {
+                        display: none !important;
+                    }
+                    
+                    /* Hide elements with vscode-file:// background/mask images */
+                    [style*="vscode-file://"] {
+                        background-image: none !important;
+                        mask-image: none !important;
+                        -webkit-mask-image: none !important;
+                    }
+                </style>
+                ${data.html}
+            `;
+
+            if (isNearBottom || scrollPos === 0) {
+                chatContainer.scrollTop = chatContainer.scrollHeight;
+            } else {
+                chatContainer.scrollTop = scrollPos;
+            }
+        }
 
         // WebSocket connection
         function connectWebSocket() {
@@ -237,99 +265,30 @@
             ws = new WebSocket(`${protocol}//${window.location.host}`);
 
             ws.onopen = () => {
-                console.log('WebSocket connected');
-                loadSnapshot();
+                console.log('Connected');
             };
 
             ws.onmessage = (event) => {
-                const data = JSON.parse(event.data);
-                if (data.type === 'snapshot_update' && autoRefreshEnabled && !userIsScrolling) {
-                    loadSnapshot();
+                const msg = JSON.parse(event.data);
+                if (msg.type === 'snapshot' && msg.data && !userIsScrolling) {
+                    renderSnapshot(msg.data);
                 }
             };
 
             ws.onclose = () => {
-                console.log('WebSocket disconnected');
-                setTimeout(connectWebSocket, 2000);
-            };
-        }
-
-        // Load snapshot
-        async function loadSnapshot() {
-            try {
-                const response = await fetch('/snapshot');
-                if (!response.ok) throw new Error('Failed to load snapshot');
-
-                const data = await response.json();
-
-                // Save scroll position
-                const scrollPos = chatContainer.scrollTop;
-                const isNearBottom = chatContainer.scrollHeight - chatContainer.scrollTop - chatContainer.clientHeight < 100;
-
-                // Update content
+                console.log('Disconnected, reconnecting...');
                 chatContent.innerHTML = `
-                    <style>
-                        ${data.css}
-                        
-                        /* Override positioning */
-                        * {
-                            position: static !important;
-                        }
-                        #cascade {
-                            position: relative !important;
-                        }
-                        
-                        /* Fix code block backgrounds and text */
-                        pre, code {
-                            background-color: #1e1e1e !important;
-                            color: #d4d4d4 !important;
-                        }
-                        
-                        pre code {
-                            background-color: transparent !important;
-                        }
-                        
-                        /* Fix terminal/console backgrounds */
-                        [class*="terminal"], [class*="console"], [class*="output"] {
-                            background-color: #1e1e1e !important;
-                            color: #d4d4d4 !important;
-                        }
-                        
-                        /* Fix any dark text on dark backgrounds */
-                        #cascade [style*="background-color: rgb(0, 0, 0)"],
-                        #cascade [style*="background-color: black"],
-                        #cascade [style*="background: rgb(0, 0, 0)"],
-                        #cascade [style*="background: black"] {
-                            color: #d4d4d4 !important;
-                        }
-                        
-                        /* Ensure code syntax highlighting is visible */
-                        .token, .hljs {
-                            color: inherit !important;
-                        }
-                        
-                        /* Fix any elements with explicit dark backgrounds */
-                        [style*="background-color:#000"],
-                        [style*="background-color: #000"],
-                        [style*="background:#000"],
-                        [style*="background: #000"] {
-                            background-color: #1e1e1e !important;
-                        }
-                    </style>
-                    ${data.html}
+                    <div class="loading">
+                        <div class="spinner"></div>
+                        <span>Reconnecting...</span>
+                    </div>
                 `;
+                setTimeout(connectWebSocket, 1000);
+            };
 
-                // Restore scroll position or scroll to bottom
-                if (isNearBottom || scrollPos === 0) {
-                    chatContainer.scrollTop = chatContainer.scrollHeight;
-                } else {
-                    chatContainer.scrollTop = scrollPos;
-                }
-
-            } catch (err) {
-                console.error('Failed to load snapshot:', err);
-                chatContent.innerHTML = `<div class="loading">Failed to load chat. <button onclick="loadSnapshot()">Retry</button></div>`;
-            }
+            ws.onerror = () => {
+                ws.close();
+            };
         }
 
         // Send message
@@ -338,7 +297,7 @@
             if (!message) return;
 
             sendBtn.disabled = true;
-            sendBtn.textContent = 'Sending...';
+            sendBtn.textContent = '...';
 
             try {
                 const response = await fetch('/send', {
@@ -349,54 +308,36 @@
 
                 if (response.ok) {
                     messageInput.value = '';
-                    messageInput.style.height = '44px';
-
-                    // Refresh after short delay
-                    setTimeout(loadSnapshot, 500);
-                } else {
-                    const error = await response.json();
-                    alert(`Failed to send: ${error.reason || 'Unknown error'}`);
+                    messageInput.style.height = '52px';
                 }
-            } catch (err) {
-                alert('Failed to send message');
+                // Silently ignore errors - message may have been sent anyway
+            } catch {
+                // Network error - ignore
             } finally {
                 sendBtn.disabled = false;
                 sendBtn.textContent = 'Send';
             }
         }
 
-
-
-        // Detect user scrolling
+        // Scroll handling
         let scrollTimeout;
         chatContainer.addEventListener('scroll', () => {
             userIsScrolling = true;
             clearTimeout(scrollTimeout);
-            clearTimeout(idleTimer);
 
-            // Show scroll to bottom button if not at bottom
             const isNearBottom = chatContainer.scrollHeight - chatContainer.scrollTop - chatContainer.clientHeight < 100;
             scrollToBottomBtn.classList.toggle('show', !isNearBottom);
 
-            // Resume after 10 seconds of idle
             scrollTimeout = setTimeout(() => {
                 userIsScrolling = false;
             }, 500);
-
-            idleTimer = setTimeout(() => {
-                autoRefreshEnabled = true;
-            }, 10000);
         });
 
-        // Scroll to bottom
         scrollToBottomBtn.addEventListener('click', () => {
-            chatContainer.scrollTo({
-                top: chatContainer.scrollHeight,
-                behavior: 'smooth'
-            });
+            chatContainer.scrollTo({ top: chatContainer.scrollHeight, behavior: 'smooth' });
         });
 
-        // Send message handlers
+        // Input handlers
         sendBtn.addEventListener('click', sendMessage);
         messageInput.addEventListener('keydown', (e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
@@ -405,13 +346,12 @@
             }
         });
 
-        // Auto-resize textarea
         messageInput.addEventListener('input', () => {
             messageInput.style.height = '44px';
             messageInput.style.height = Math.min(messageInput.scrollHeight, 120) + 'px';
         });
 
-        // Initialize
+        // Start
         connectWebSocket();
     </script>
 </body>
