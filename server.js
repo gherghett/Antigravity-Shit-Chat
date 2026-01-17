@@ -360,6 +360,15 @@ async function captureHTML(cdp, metadata = {}) {
             const messagesRoot = root.querySelector('.composer-messages-container') || root.querySelector('.conversations') || root;
             const clone = messagesRoot.cloneNode(true);
             clone.querySelectorAll('.composer-input-blur-wrapper, .composer-bar-input-buttons, .composer-find-widget-container').forEach(el => el.remove());
+            clone.querySelectorAll('.composer-messages-container, .scrollable-div-container, .monaco-scrollable-element, .monaco-scrollable-element *')
+                .forEach(el => {
+                    el.style.removeProperty('height');
+                    el.style.removeProperty('max-height');
+                    el.style.removeProperty('min-height');
+                    el.style.removeProperty('overflow');
+                    el.style.removeProperty('overflow-x');
+                    el.style.removeProperty('overflow-y');
+                });
 
             const cssVars = {};
             for (let i = 0; i < themeStyles.length; i += 1) {
@@ -386,6 +395,29 @@ async function captureHTML(cdp, metadata = {}) {
             for (const [name, value] of Object.entries(cssVars)) {
                 wrapper.style.setProperty(name, value);
             }
+            const style = document.createElement('style');
+            style.textContent = [
+                '#cascade {',
+                '  overflow: visible !important;',
+                '}',
+                '#cascade .composer-messages-container,',
+                '#cascade .scrollable-div-container,',
+                '#cascade .monaco-scrollable-element {',
+                '  height: auto !important;',
+                '  max-height: none !important;',
+                '  min-height: 0 !important;',
+                '  overflow: visible !important;',
+                '}',
+                '#cascade .monaco-scrollable-element .shadow,',
+                '#cascade .monaco-scrollable-element .slider,',
+                '#cascade .monaco-scrollable-element .scrollbar {',
+                '  display: none !important;',
+                '}',
+                '#cascade .composer-rendered-message {',
+                '  position: static !important;',
+                '}'
+            ].join('\\n');
+            wrapper.appendChild(style);
             const inner = document.createElement('div');
             if (rootClasses) inner.className = rootClasses;
             inner.appendChild(clone);
