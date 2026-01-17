@@ -308,25 +308,17 @@
             sendBtn.textContent = '...';
 
             try {
-                const response = await fetch('/send', {
+                await fetch('/send', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ message })
                 });
-
-                if (response.ok) {
-                    // Server confirmed success - clear immediately
-                    messageInput.value = '';
-                    messageInput.style.height = '52px';
-                } else {
-                    // Server returned error - but message might have gone through
-                    // Store pending message to check in next snapshot
-                    pendingMessage = message;
-                    setTimeout(() => { pendingMessage = null; }, 10000); // Clear after 10s
-                }
             } catch {
-                // Network error - keep message for retry
+                // Network error - ignore, user can try again
             } finally {
+                // Always clear textarea after send attempt
+                messageInput.value = '';
+                messageInput.style.height = '52px';
                 sendBtn.disabled = false;
                 sendBtn.textContent = 'Send';
             }
