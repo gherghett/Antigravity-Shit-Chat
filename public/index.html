@@ -190,11 +190,19 @@
 
         let userIsScrolling = false;
         let ws = null;
+        let pendingMessage = null; // Track message waiting for visual confirmation
 
         // Render snapshot
         function renderSnapshot(data) {
             const scrollPos = chatContainer.scrollTop;
             const isNearBottom = chatContainer.scrollHeight - chatContainer.scrollTop - chatContainer.clientHeight < 100;
+
+            // Check if pending message appeared in snapshot (visual confirmation)
+            if (pendingMessage && data.html && data.html.includes(pendingMessage.slice(0, 50))) {
+                messageInput.value = '';
+                messageInput.style.height = '52px';
+                pendingMessage = null;
+            }
 
             // Apply Antigravity's theme class to our html element
             if (data.themeClass) {
@@ -307,12 +315,17 @@
                 });
 
                 if (response.ok) {
+                    // Server confirmed success - clear immediately
                     messageInput.value = '';
                     messageInput.style.height = '52px';
+                } else {
+                    // Server returned error - but message might have gone through
+                    // Store pending message to check in next snapshot
+                    pendingMessage = message;
+                    setTimeout(() => { pendingMessage = null; }, 10000); // Clear after 10s
                 }
-                // Silently ignore errors - message may have been sent anyway
             } catch {
-                // Network error - ignore
+                // Network error - keep message for retry
             } finally {
                 sendBtn.disabled = false;
                 sendBtn.textContent = 'Send';

@@ -254,9 +254,7 @@ async function captureSnapshot(cdp: CDPConnection): Promise<Snapshot | null> {
 async function injectMessage(cdp: CDPConnection, text: string): Promise<InjectResult> {
     const escapedText = text.replace(/"/g, '\\"').replace(/\n/g, '\\n');
     const EXPRESSION = `(async () => {
-        const cancel = document.querySelector('[data-tooltip-id="input-send-button-cancel-tooltip"]');
-        if (cancel && cancel.offsetParent !== null) return { ok:false, reason:"busy" };
-
+        // Find visible editor (Antigravity supports message queuing even during generation)
         const editors = [...document.querySelectorAll('#cascade [data-lexical-editor="true"][contenteditable="true"][role="textbox"]')]
             .filter(el => el.offsetParent !== null);
         const editor = editors.at(-1);
@@ -359,7 +357,6 @@ async function updateSnapshot(): Promise<boolean> {
                 lastSnapshot = snapshot;
                 lastSnapshotHash = hash;
                 broadcastSnapshot(snapshot);
-                console.log(`📸 Snapshot updated (hash: ${hash})`);
                 return true;
             }
         }
