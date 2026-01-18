@@ -93,24 +93,106 @@ async function connectCDP(url) {
 
 async function extractMetadata(cdp) {
     const SCRIPT = `(() => {
-        const cascade = document.getElementById('cascade');
-        if (!cascade) return { found: false };
-        
-        let chatTitle = null;
-        const possibleTitleSelectors = ['h1', 'h2', 'header', '[class*="title"]'];
-        for (const sel of possibleTitleSelectors) {
-            const el = document.querySelector(sel);
-            if (el && el.textContent.length > 2 && el.textContent.length < 50) {
-                chatTitle = el.textContent.trim();
-                break;
-            }
-        }
-        
-        return {
-            found: true,
-            chatTitle: chatTitle || 'Agent',
-            isActive: document.hasFocus()
+        const normalizeText = (value) => (value || '').replace(/\\s+/g, ' ').trim();
+        const isGoodTitle = (value) => {
+            const text = normalizeText(value);
+            if (text.length < 3 || text.length > 80) return false;
+            const bad = [
+                /^new chat/i,
+                /^new conversation/i,
+                /^past chats?/i,
+                /^view all/i,
+                /^plan/i,
+                /^local$/i,
+                /^run everything/i,
+                /^success$/i
+            ];
+            return !bad.some((re) => re.test(text));
         };
+        const getExplicitCursorTitle = () => {
+            const auxBar = document.getElementById('workbench.parts.auxiliarybar') || document.getElementById('workbench.parts.sidebar');
+            const root = auxBar || document;
+            const activeTab = root.querySelector(
+                '.composite-bar .action-item.checked,' +
+                '.composite-bar .action-item[aria-selected="true"],' +
+                '.composite-bar .action-item[aria-current="true"],' +
+                '[role="tab"].checked,' +
+                '[role="tab"][aria-selected="true"],' +
+                '[role="tab"][aria-current="true"]'
+            );
+            const label = activeTab?.querySelector('.action-label') || activeTab;
+            const text = normalizeText(label?.textContent || '');
+            return isGoodTitle(text) ? text : null;
+        };
+        const getExplicitAntigravityTitle = () => {
+            const el = document.querySelector('.text-ide-sidebar-title-color');
+            const text = normalizeText(el?.textContent || '');
+            return isGoodTitle(text) ? text : null;
+        };
+        const pickFirstMessage = (root) => {
+            if (!root) return null;
+            const human =
+                root.querySelector('[data-message-role="human"]') ||
+                root.querySelector('.composer-human-message') ||
+                root.querySelector('[class*="user-message"]') ||
+                root.querySelector('[class*="human-message"]');
+            if (human) {
+                const node = human.querySelector('span[data-lexical-text], p, div') || human;
+                const text = normalizeText(node.textContent || node.innerText || '');
+                if (isGoodTitle(text)) return text;
+            }
+            const node = root.querySelector('span[data-lexical-text], .prose p, p, [class*="message"] p, [class*="message"] div');
+            if (node) {
+                const text = normalizeText(node.textContent || node.innerText || '');
+                if (isGoodTitle(text)) return text;
+            }
+            return null;
+        };
+        const cascade = document.getElementById('cascade');
+        if (cascade) {
+            let chatTitle = null;
+            const possibleTitleSelectors = ['h1', 'h2', 'header', '[class*="title"]'];
+            for (const sel of possibleTitleSelectors) {
+                const el = document.querySelector(sel);
+                if (el && el.textContent.length > 2 && el.textContent.length < 50) {
+                    chatTitle = el.textContent.trim();
+                    break;
+                }
+            }
+            const explicitTitle = getExplicitAntigravityTitle();
+            const inferred = pickFirstMessage(cascade);
+
+            return {
+                found: true,
+                app: 'antigravity',
+                rootElementId: 'cascade',
+                rootSelector: '#cascade',
+                chatTitle: explicitTitle || inferred || chatTitle || 'Agent',
+                isActive: document.hasFocus()
+            };
+        }
+
+        const cursorPanel = document.querySelector('[id^="workbench.panel.aichat"]');
+        if (cursorPanel) {
+            const titleEl = cursorPanel.querySelector('.pane-header .title') || cursorPanel.querySelector('[aria-label*="Chat"]');
+            const titleText = titleEl?.textContent?.trim();
+            const historyActive = cursorPanel.querySelector('.composer-below-chat-history-item[aria-current="true"], .composer-below-chat-history-item.active, .composer-below-chat-history-item.selected');
+            const historyTitle = historyActive?.textContent?.trim();
+            const messagesRoot = cursorPanel.querySelector('.composer-messages-container') || cursorPanel;
+            const inferredMessage = pickFirstMessage(messagesRoot);
+            const explicitTitle = getExplicitCursorTitle();
+            const inferredTitle = (explicitTitle || historyTitle || inferredMessage || titleText || '').split('\\n')[0].trim();
+            return {
+                found: true,
+                app: 'cursor',
+                rootElementId: cursorPanel.id || null,
+                rootSelector: '[id^="workbench.panel.aichat"]',
+                chatTitle: inferredTitle && inferredTitle.length > 1 ? inferredTitle : 'Cursor Chat',
+                isActive: document.hasFocus()
+            };
+        }
+
+        return { found: false };
     })()`;
 
     // Try finding context first if not known
@@ -133,54 +215,244 @@ async function extractMetadata(cdp) {
     return null;
 }
 
-async function captureCSS(cdp) {
+async function captureCSS(cdp, options = {}) {
+    const { scopeSelector = '#cascade', scopeAll = false } = options;
     const SCRIPT = `(() => {
-        // Gather CSS and namespace it basic way to prevent leaks
-        let css = '';
+        // Gather CSS and namespace it to prevent leaks
+        const scope = ${JSON.stringify(scopeSelector)};
+        const scopeAll = ${JSON.stringify(scopeAll)};
+        const cssParts = [];
+
+        const scopeSelectorText = (selector) => {
+            let trimmed = selector.trim();
+            if (!trimmed) return trimmed;
+            if (trimmed.startsWith(scope)) return trimmed;
+            if (trimmed.startsWith('@')) return trimmed;
+            const replaced = trimmed
+                .replace(/(^|[\\s>+~,(])(:root)(?=[\\s>+~.#:[,{]|$)/gi, '$1' + scope)
+                .replace(/(^|[\\s>+~,(])(html|body)(?=[\\s>+~.#:[,{]|$)/gi, '$1' + scope);
+            if (replaced !== trimmed) return replaced;
+            return scope + ' ' + trimmed;
+        };
+
+        const processRule = (rule) => {
+            try {
+                if (rule.type === CSSRule.STYLE_RULE) {
+                    if (!scopeAll) {
+                        let text = rule.cssText;
+                        text = text.replace(/(^|[\\s,}])body(?=[\\s,{])/gi, '$1' + scope);
+                        text = text.replace(/(^|[\\s,}])html(?=[\\s,{])/gi, '$1' + scope);
+                        text = text.replace(/(^|[\\s,}])(:root)(?=[\\s,{])/gi, '$1' + scope);
+                        return text;
+                    }
+                    const selectors = rule.selectorText.split(',').map(scopeSelectorText).join(', ');
+                    return selectors + ' { ' + rule.style.cssText + ' }';
+                }
+                if (rule.type === CSSRule.MEDIA_RULE) {
+                    const inner = Array.from(rule.cssRules).map(processRule).filter(Boolean).join('\\n');
+                    return inner ? '@media ' + rule.conditionText + ' { ' + inner + ' }' : '';
+                }
+                if (rule.type === CSSRule.SUPPORTS_RULE) {
+                    const inner = Array.from(rule.cssRules).map(processRule).filter(Boolean).join('\\n');
+                    return inner ? '@supports ' + rule.conditionText + ' { ' + inner + ' }' : '';
+                }
+                if (rule.type === CSSRule.FONT_FACE_RULE || rule.type === CSSRule.KEYFRAMES_RULE) {
+                    return rule.cssText;
+                }
+                return rule.cssText || '';
+            } catch (e) { return ''; }
+        };
+
         for (const sheet of document.styleSheets) {
-            try { 
+            try {
                 for (const rule of sheet.cssRules) {
-                    let text = rule.cssText;
-                    // Naive scoping: replace body/html with #cascade locator
-                    // This prevents the monitored app's global backgrounds from overriding our monitor's body
-                    text = text.replace(/(^|[\\s,}])body(?=[\\s,{])/gi, '$1#cascade');
-                    text = text.replace(/(^|[\\s,}])html(?=[\\s,{])/gi, '$1#cascade');
-                    css += text + '\\n'; 
+                    const text = processRule(rule);
+                    if (text) cssParts.push(text);
                 }
             } catch (e) { }
         }
-        return { css };
+
+        return { css: cssParts.join('\\n') };
     })()`;
 
     const contextId = cdp.rootContextId;
     if (!contextId) return null;
 
     try {
-        const result = await cdp.call("Runtime.evaluate", {
-            expression: SCRIPT,
-            returnByValue: true,
-            contextId: contextId
-        });
+            const result = await cdp.call("Runtime.evaluate", {
+                expression: SCRIPT,
+                returnByValue: true,
+                contextId: contextId
+            });
         return result.result?.value?.css || '';
     } catch (e) { return ''; }
 }
 
-async function captureHTML(cdp) {
+async function captureHTML(cdp, metadata = {}) {
+    const { app = 'antigravity', rootElementId = 'cascade', rootSelector = '#cascade' } = metadata;
     const SCRIPT = `(() => {
-        const cascade = document.getElementById('cascade');
-        if (!cascade) return { error: 'cascade not found' };
-        
-        const clone = cascade.cloneNode(true);
+        const app = ${JSON.stringify(app)};
+        const rootElementId = ${JSON.stringify(rootElementId)};
+        const rootSelector = ${JSON.stringify(rootSelector)};
+        const root = (rootElementId && document.getElementById(rootElementId)) || (rootSelector && document.querySelector(rootSelector));
+        if (!root) return { error: 'root not found' };
+
+        const themeRoot = document.querySelector('.monaco-workbench') || document.body || document.documentElement;
+        const themeStyles = window.getComputedStyle(themeRoot);
+        const bodyStyles = window.getComputedStyle(document.body);
+        const normalizeText = (value) => (value || '').replace(/\\s+/g, ' ').trim();
+        const isGoodTitle = (value) => {
+            const text = normalizeText(value);
+            if (text.length < 3 || text.length > 80) return false;
+            const bad = [
+                /^new chat/i,
+                /^new conversation/i,
+                /^past chats?/i,
+                /^view all/i,
+                /^plan/i,
+                /^local$/i,
+                /^run everything/i,
+                /^success$/i
+            ];
+            return !bad.some((re) => re.test(text));
+        };
+        const getExplicitCursorTitle = () => {
+            const auxBar = document.getElementById('workbench.parts.auxiliarybar') || document.getElementById('workbench.parts.sidebar');
+            const root = auxBar || document;
+            const activeTab = root.querySelector(
+                '.composite-bar .action-item.checked,' +
+                '.composite-bar .action-item[aria-selected="true"],' +
+                '.composite-bar .action-item[aria-current="true"],' +
+                '[role="tab"].checked,' +
+                '[role="tab"][aria-selected="true"],' +
+                '[role="tab"][aria-current="true"]'
+            );
+            const label = activeTab?.querySelector('.action-label') || activeTab;
+            const text = normalizeText(label?.textContent || '');
+            return isGoodTitle(text) ? text : null;
+        };
+        const getExplicitAntigravityTitle = () => {
+            const el = document.querySelector('.text-ide-sidebar-title-color');
+            const text = normalizeText(el?.textContent || '');
+            return isGoodTitle(text) ? text : null;
+        };
+        const pickFirstMessage = (root) => {
+            if (!root) return null;
+            const human =
+                root.querySelector('[data-message-role="human"]') ||
+                root.querySelector('.composer-human-message') ||
+                root.querySelector('[class*="user-message"]') ||
+                root.querySelector('[class*="human-message"]');
+            if (human) {
+                const node = human.querySelector('span[data-lexical-text], p, div') || human;
+                const text = normalizeText(node.textContent || node.innerText || '');
+                if (isGoodTitle(text)) return text;
+            }
+            const node = root.querySelector('span[data-lexical-text], .prose p, p, [class*="message"] p, [class*="message"] div');
+            if (node) {
+                const text = normalizeText(node.textContent || node.innerText || '');
+                if (isGoodTitle(text)) return text;
+            }
+            return null;
+        };
+
+        if (app === 'cursor') {
+            const messagesRoot = root.querySelector('.composer-messages-container') || root.querySelector('.conversations') || root;
+            const clone = messagesRoot.cloneNode(true);
+            clone.querySelectorAll('.composer-input-blur-wrapper, .composer-bar-input-buttons, .composer-find-widget-container').forEach(el => el.remove());
+            clone.querySelectorAll('.composer-messages-container, .scrollable-div-container, .monaco-scrollable-element, .monaco-scrollable-element *')
+                .forEach(el => {
+                    el.style.removeProperty('height');
+                    el.style.removeProperty('max-height');
+                    el.style.removeProperty('min-height');
+                    el.style.removeProperty('overflow');
+                    el.style.removeProperty('overflow-x');
+                    el.style.removeProperty('overflow-y');
+                });
+
+            const cssVars = {};
+            for (let i = 0; i < themeStyles.length; i += 1) {
+                const name = themeStyles[i];
+                if (name && name.startsWith('--')) {
+                    cssVars[name] = themeStyles.getPropertyValue(name);
+                }
+            }
+
+            const msgStyleTarget = messagesRoot.querySelector('.composer-human-message, .composer-ai-message, .composer-rendered-message') || messagesRoot;
+            const msgStyles = window.getComputedStyle(msgStyleTarget);
+
+            const wrapper = document.createElement('div');
+            wrapper.id = 'cascade';
+            wrapper.className = 'cursor-chat';
+            const rootClasses = [document.documentElement.className, document.body.className].filter(Boolean).join(' ');
+            if (rootClasses) wrapper.className += ' ' + rootClasses;
+            wrapper.style.fontFamily = msgStyles.fontFamily || themeStyles.fontFamily || '-apple-system, system-ui, sans-serif';
+            wrapper.style.fontSize = msgStyles.fontSize || themeStyles.fontSize || '13px';
+            wrapper.style.lineHeight = msgStyles.lineHeight || themeStyles.lineHeight || '1.5';
+            wrapper.style.color = msgStyles.color || bodyStyles.color || '#e5e7eb';
+            wrapper.style.background = 'transparent';
+            wrapper.style.padding = '12px';
+            for (const [name, value] of Object.entries(cssVars)) {
+                wrapper.style.setProperty(name, value);
+            }
+            const style = document.createElement('style');
+            style.textContent = [
+                '#cascade {',
+                '  overflow: visible !important;',
+                '}',
+                '#cascade .composer-messages-container,',
+                '#cascade .scrollable-div-container,',
+                '#cascade .monaco-scrollable-element {',
+                '  height: auto !important;',
+                '  max-height: none !important;',
+                '  min-height: 0 !important;',
+                '  overflow: visible !important;',
+                '}',
+                '#cascade .monaco-scrollable-element .shadow,',
+                '#cascade .monaco-scrollable-element .slider,',
+                '#cascade .monaco-scrollable-element .scrollbar {',
+                '  display: none !important;',
+                '}',
+                '#cascade .composer-rendered-message {',
+                '  position: static !important;',
+                '}'
+            ].join('\\n');
+            wrapper.appendChild(style);
+            const inner = document.createElement('div');
+            if (rootClasses) inner.className = rootClasses;
+            inner.appendChild(clone);
+            wrapper.appendChild(inner);
+            const explicitTitle = getExplicitCursorTitle();
+            const inferredTitle = explicitTitle || pickFirstMessage(messagesRoot);
+
+            return {
+                html: wrapper.outerHTML,
+                bodyBg: themeStyles.backgroundColor || bodyStyles.backgroundColor,
+                bodyColor: msgStyles.color || bodyStyles.color,
+                title: inferredTitle
+            };
+        }
+
+        const clone = root.cloneNode(true);
         // Remove input box to keep snapshot clean
         const input = clone.querySelector('[contenteditable="true"]')?.closest('div[id^="cascade"] > div');
         if (input) input.remove();
-        
-        const bodyStyles = window.getComputedStyle(document.body);
+
+        let html = clone.outerHTML;
+        if (root.id !== 'cascade') {
+            const wrapper = document.createElement('div');
+            wrapper.id = 'cascade';
+            wrapper.appendChild(clone);
+            html = wrapper.outerHTML;
+        }
+        const explicitTitle = getExplicitAntigravityTitle();
+        const inferredTitle = explicitTitle || pickFirstMessage(root);
 
         return {
-            html: clone.outerHTML,
+            html,
             bodyBg: bodyStyles.backgroundColor,
-            bodyColor: bodyStyles.color
+            bodyColor: bodyStyles.color,
+            title: inferredTitle
         };
     })()`;
 
@@ -224,7 +496,8 @@ async function discover() {
                 // Refresh metadata
                 const meta = await extractMetadata(existing.cdp);
                 if (meta) {
-                    existing.metadata = { ...existing.metadata, ...meta };
+                    const { found, contextId, ...rest } = meta;
+                    existing.metadata = { ...existing.metadata, ...rest };
                     if (meta.contextId) existing.cdp.rootContextId = meta.contextId; // Update optimization
                     newCascades.set(id, existing);
                     continue;
@@ -246,10 +519,13 @@ async function discover() {
                     metadata: {
                         windowTitle: target.title,
                         chatTitle: meta.chatTitle,
-                        isActive: meta.isActive
+                        isActive: meta.isActive,
+                        app: meta.app,
+                        rootElementId: meta.rootElementId,
+                        rootSelector: meta.rootSelector
                     },
                     snapshot: null,
-                    css: await captureCSS(cdp), //only on init bc its huge
+                    css: await captureCSS(cdp, { scopeSelector: '#cascade', scopeAll: meta.app === 'cursor' }), //only on init bc its huge
                     snapshotHash: null
                 };
                 newCascades.set(id, cascade);
@@ -280,12 +556,16 @@ async function updateSnapshots() {
     // Parallel updates
     await Promise.all(Array.from(cascades.values()).map(async (c) => {
         try {
-            const snap = await captureHTML(c.cdp); // Only capture HTML
+            const snap = await captureHTML(c.cdp, c.metadata); // Only capture HTML
             if (snap) {
                 const hash = hashString(snap.html);
                 if (hash !== c.snapshotHash) {
                     c.snapshot = snap;
                     c.snapshotHash = hash;
+                    if (snap.title && snap.title !== c.metadata.chatTitle) {
+                        c.metadata.chatTitle = snap.title;
+                        broadcastCascadeList();
+                    }
                     broadcast({ type: 'snapshot_update', cascadeId: c.id });
                     // console.log(`📸 Updated ${c.metadata.chatTitle}`);
                 }
@@ -388,33 +668,45 @@ async function main() {
 // Injection Helper (Moved down to keep main clear)
 async function injectMessage(cdp, text) {
     const SCRIPT = `(async () => {
-        // Try contenteditable first, then textarea
-        const editor = document.querySelector('[contenteditable="true"]') || document.querySelector('textarea');
+        const value = ${JSON.stringify(text)};
+        const cursorPanel = document.querySelector('[id^="workbench.panel.aichat"]');
+        const cursorEditor = cursorPanel?.querySelector('.aislash-editor-input') || cursorPanel?.querySelector('[contenteditable="true"][role="textbox"]');
+        if (cursorPanel && !cursorEditor) return { ok: false, reason: "cursor editor not found" };
+        // Try cursor editor, then contenteditable, then textarea
+        const editor = cursorEditor || document.querySelector('#cascade [contenteditable="true"]') || document.querySelector('textarea');
         if (!editor) return { ok: false, reason: "no editor found" };
         
         editor.focus();
         
         if (editor.tagName === 'TEXTAREA') {
             const nativeTextAreaValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
-            nativeTextAreaValueSetter.call(editor, "${text.replace(/"/g, '\\"')}");
+            nativeTextAreaValueSetter.call(editor, value);
             editor.dispatchEvent(new Event('input', { bubbles: true }));
         } else {
             document.execCommand("selectAll", false, null);
-            document.execCommand("insertText", false, "${text.replace(/"/g, '\\"')}");
+            const ok = document.execCommand("insertText", false, value);
+            if (!ok) {
+                editor.textContent = value;
+                editor.dispatchEvent(new Event('input', { bubbles: true }));
+            }
         }
         
         await new Promise(r => setTimeout(r, 100));
         
         // Try multiple button selectors
-        const btn = document.querySelector('button[class*="arrow"]') || 
+        const btn = cursorPanel?.querySelector('.send-with-mode button, .send-with-mode [role="button"], .send-with-mode .anysphere-icon-button') ||
+                   document.querySelector('button[class*="arrow"]') || 
                    document.querySelector('button[aria-label*="Send"]') ||
-                   document.querySelector('button[type="submit"]');
+                   document.querySelector('button[type="submit"]') ||
+                   document.querySelector('[role="button"][aria-label*="Send"]');
 
         if (btn) {
             btn.click();
         } else {
              // Fallback to Enter key
-             editor.dispatchEvent(new KeyboardEvent("keydown", { bubbles:true, key:"Enter" }));
+             const eventInit = { bubbles: true, cancelable: true, key: "Enter", code: "Enter", keyCode: 13, which: 13 };
+             editor.dispatchEvent(new KeyboardEvent("keydown", eventInit));
+             editor.dispatchEvent(new KeyboardEvent("keyup", eventInit));
         }
         return { ok: true };
     })()`;
