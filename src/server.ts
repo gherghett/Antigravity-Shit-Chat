@@ -14,6 +14,11 @@ const POLL_INTERVAL = 3000;
 const HTTP_TIMEOUT = 2000; // 2 seconds max for discovery
 const CDP_CONTEXT_WAIT = 200; // Wait for contexts (was 1000ms!)
 
+// Authentication
+const AUTH_TOKEN = process.env.AUTH_TOKEN || Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+console.log('\n🔒 SECURITY: Authentication Enabled');
+console.log(`🔑 Access Token: ${AUTH_TOKEN}\n`);
+
 // Types
 interface CDPInfo {
     port: number;
@@ -340,9 +345,11 @@ async function captureSnapshot(cdp: CDPConnection): Promise<Snapshot | null> {
     return null;
 }
 
-// Inject message into Antigravity
+// Inject message into Antigravity (RCE FIXED)
 async function injectMessage(cdp: CDPConnection, text: string): Promise<InjectResult> {
-    const escapedText = text.replace(/"/g, '\\"').replace(/\n/g, '\\n');
+    // SAFE: Use JSON.stringify to properly escape the string for JS injection
+    const safeText = JSON.stringify(text); // e.g. "Hello \"world\""
+    
     const EXPRESSION = `(async () => {
         // Find visible editor (Antigravity supports message queuing even during generation)
         const editors = [...document.querySelectorAll('#cascade [data-lexical-editor="true"][contenteditable="true"][role="textbox"]')]
@@ -355,11 +362,12 @@ async function injectMessage(cdp: CDPConnection, text: string): Promise<InjectRe
         document.execCommand?.("delete", false, null);
 
         let inserted = false;
-        try { inserted = !!document.execCommand?.("insertText", false, "${escapedText}"); } catch {}
+        // Use safeText directly - it already contains quotes
+        try { inserted = !!document.execCommand?.("insertText", false, ${safeText}); } catch {}
         if (!inserted) {
-            editor.textContent = "${escapedText}";
-            editor.dispatchEvent(new InputEvent("beforeinput", { bubbles:true, inputType:"insertText", data:"${escapedText}" }));
-            editor.dispatchEvent(new InputEvent("input", { bubbles:true, inputType:"insertText", data:"${escapedText}" }));
+            editor.textContent = ${safeText};
+            editor.dispatchEvent(new InputEvent("beforeinput", { bubbles:true, inputType:"insertText", data:${safeText} }));
+            editor.dispatchEvent(new InputEvent("input", { bubbles:true, inputType:"insertText", data:${safeText} }));
         }
 
         await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
@@ -488,6 +496,31 @@ async function createServer(): Promise<{ server: http.Server; wss: WebSocketServ
     app.use(express.json());
     app.use(express.static(join(__dirname, '..', 'public')));
 
+    // Auth Middleware
+    app.use((req, res, next) => {
+        if (req.path === '/' || req.path === '/index.html' || req.path.match(/\.(js|css|ico|png)$/)) {
+            return next();
+        }
+
+        const authHeader = req.headers.authorization;
+        if (authHeader === `Bearer ${AUTH_TOKEN}`) {
+            return next();
+        }
+        
+        // Also check query param for easy testing/some clients
+        if (req.query.token === AUTH_TOKEN) {
+            return next();
+        }
+
+        res.status(401).json({ error: 'Unauthorized' });
+    });
+
+    // Security Headers (CSP)
+    app.use((_req, res, next) => {
+        res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' data:; img-src 'self' data: blob:; connect-src 'self' ws: wss:;");
+        next();
+    });
+
     // Get current snapshot (fallback for initial load)
     app.get('/snapshot', (_req: Request, res: Response) => {
         if (!lastSnapshot) {
@@ -518,8 +551,17 @@ async function createServer(): Promise<{ server: http.Server; wss: WebSocketServ
     });
 
     // WebSocket - send current snapshot on connect
-    wss.on('connection', (ws) => {
-        console.log('📱 Client connected');
+    wss.on('connection', (ws, req) => {
+        // Parse token from URL query params
+        const url = new URL(req.url || '', `http://${req.headers.host}`);
+        const token = url.searchParams.get('token');
+
+        if (token !== AUTH_TOKEN) {
+            ws.close(1008, 'Unauthorized');
+            return;
+        }
+
+        console.log('📱 Client connected (Authenticated)');
 
         // Send current snapshot immediately on connect
         if (lastSnapshot) {

@@ -159,6 +159,70 @@
                 padding: 8px 12px;
             }
         }
+
+        /* Login Modal */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.8);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 2000;
+            backdrop-filter: blur(5px);
+        }
+
+        .modal-overlay.show {
+            display: flex;
+        }
+
+        .login-box {
+            background: #2a2a2a;
+            padding: 24px;
+            border-radius: 12px;
+            width: 90%;
+            max-width: 320px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+            border: 1px solid #3a3a3a;
+        }
+
+        .login-title {
+            font-size: 20px;
+            font-weight: 600;
+            margin-bottom: 16px;
+            color: #fff;
+            text-align: center;
+        }
+
+        .login-input {
+            width: 100%;
+            padding: 12px;
+            background: #1a1a1a;
+            border: 1px solid #3a3a3a;
+            border-radius: 8px;
+            color: #fff;
+            margin-bottom: 16px;
+            font-family: inherit;
+        }
+
+        .login-input:focus {
+            outline: none;
+            border-color: #3b82f6;
+        }
+
+        .login-btn {
+            width: 100%;
+            padding: 12px;
+            background: #3b82f6;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+        }
     </style>
 </head>
 
@@ -181,6 +245,16 @@
         </div>
     </div>
 
+    <!-- Login Modal -->
+    <div class="modal-overlay" id="loginModal">
+        <div class="login-box">
+            <div class="login-title">🔐 Authentication Required</div>
+            <input type="password" class="login-input" id="tokenInput" placeholder="Enter Access Token"
+                autocomplete="off">
+            <button class="login-btn" id="loginBtn">Login</button>
+        </div>
+    </div>
+
     <script>
         const chatContainer = document.getElementById('chatContainer');
         const chatContent = document.getElementById('chatContent');
@@ -188,9 +262,46 @@
         const sendBtn = document.getElementById('sendBtn');
         const scrollToBottomBtn = document.getElementById('scrollToBottom');
 
+        // Auth elements
+        const loginModal = document.getElementById('loginModal');
+        const tokenInput = document.getElementById('tokenInput');
+        const loginBtn = document.getElementById('loginBtn');
+
         let userIsScrolling = false;
         let ws = null;
         let pendingMessage = null; // Track message waiting for visual confirmation
+        let authToken = localStorage.getItem('ag_auth_token') || '';
+
+        // Show login if needed
+        function checkAuth() {
+            if (!authToken) {
+                showLogin();
+                return false;
+            }
+            return true;
+        }
+
+        function showLogin() {
+            loginModal.classList.add('show');
+            tokenInput.focus();
+        }
+
+        function handleLogin() {
+            const token = tokenInput.value.trim();
+            if (token) {
+                authToken = token;
+                localStorage.setItem('ag_auth_token', token);
+                loginModal.classList.remove('show');
+                // Reconnect
+                if (ws) ws.close();
+                else connectWebSocket();
+            }
+        }
+
+        loginBtn.addEventListener('click', handleLogin);
+        tokenInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') handleLogin();
+        });
 
         // Render snapshot
         function renderSnapshot(data) {
@@ -285,8 +396,14 @@
 
         // WebSocket connection
         function connectWebSocket() {
+            if (!authToken) {
+                showLogin();
+                return;
+            }
+
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            ws = new WebSocket(`${protocol}//${window.location.host}`);
+            // Append token to URL
+            ws = new WebSocket(`${protocol}//${window.location.host}?token=${encodeURIComponent(authToken)}`);
 
             ws.onopen = () => {
                 console.log('Connected');
@@ -299,15 +416,22 @@
                 }
             };
 
-            ws.onclose = () => {
-                console.log('Disconnected, reconnecting...');
-                chatContent.innerHTML = `
-                    <div class="loading">
-                        <div class="spinner"></div>
-                        <span>Reconnecting...</span>
-                    </div>
-                `;
-                setTimeout(connectWebSocket, 1000);
+            ws.onclose = (event) => {
+                if (event.code === 1008) {
+                    console.log('Auth failed');
+                    authToken = ''; // Clear invalid token
+                    localStorage.removeItem('ag_auth_token');
+                    showLogin();
+                } else {
+                    console.log('Disconnected, reconnecting...');
+                    chatContent.innerHTML = `
+                        <div class="loading">
+                            <div class="spinner"></div>
+                            <span>Reconnecting...</span>
+                        </div>
+                    `;
+                    setTimeout(connectWebSocket, 1000);
+                }
             };
 
             ws.onerror = () => {
@@ -317,6 +441,8 @@
 
         // Send message
         async function sendMessage() {
+            if (!checkAuth()) return;
+
             const message = messageInput.value.trim();
             if (!message) return;
 
@@ -324,13 +450,24 @@
             sendBtn.textContent = '...';
 
             try {
-                await fetch('/send', {
+                const res = await fetch('/send', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${authToken}`
+                    },
                     body: JSON.stringify({ message })
                 });
-            } catch {
-                // Network error - ignore, user can try again
+
+                if (res.status === 401) {
+                    authToken = '';
+                    localStorage.removeItem('ag_auth_token');
+                    showLogin();
+                    throw new Error('Unauthorized');
+                }
+
+            } catch (e) {
+                console.error(e);
             } finally {
                 // Always clear textarea after send attempt
                 messageInput.value = '';
