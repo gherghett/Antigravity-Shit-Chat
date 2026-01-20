@@ -255,6 +255,25 @@
         </div>
     </div>
 
+    <!-- Instances Modal -->
+    <div class="modal-overlay" id="instancesModal">
+        <div class="login-box">
+            <div class="login-title" style="display:flex;justify-content:space-between;">
+                <span>🖥️ Instances</span>
+                <span id="closeInstancesBtn" style="cursor:pointer;">✕</span>
+            </div>
+            <div id="instancesList"
+                style="display:flex;flex-direction:column;gap:8px;max-height:300px;overflow-y:auto;">
+                <div class="loading" style="padding:20px;">
+                    <div class="spinner"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Instance Toggle Button (Top Right) -->
+    <button class="fab" id="instancesBtn" style="top:16px; bottom:auto; display:flex; font-size:16px;">🖥️</button>
+
     <script>
         const chatContainer = document.getElementById('chatContainer');
         const chatContent = document.getElementById('chatContent');
@@ -271,6 +290,17 @@
         let ws = null;
         let pendingMessage = null; // Track message waiting for visual confirmation
         let authToken = localStorage.getItem('ag_auth_token') || '';
+
+        // Check URL for token immediately (QR code login)
+        const urlParams = new URLSearchParams(window.location.search);
+        const urlToken = urlParams.get('token');
+
+        if (urlToken) {
+            authToken = urlToken;
+            localStorage.setItem('ag_auth_token', urlToken);
+            // Clean URL
+            window.history.replaceState({}, document.title, window.location.pathname);
+        }
 
         // Show login if needed
         function checkAuth() {
@@ -406,13 +436,37 @@
             ws = new WebSocket(`${protocol}//${window.location.host}?token=${encodeURIComponent(authToken)}`);
 
             ws.onopen = () => {
-                console.log('Connected');
+                const loader = document.querySelector('.loading span');
+                if (loader) loader.textContent = 'Authenticating...';
+
+                // Request data immediately
+                ws.send(JSON.stringify({ type: 'request_snapshot' }));
+
+                // Visual update
+                setTimeout(() => {
+                    const span = document.querySelector('.loading span');
+                    if (span) span.textContent = 'Waiting for Antigravity...';
+                }, 500);
+
+                // Polling for snapshot if it doesn't arrive instantly
+                const pollInterval = setInterval(() => {
+                    if (document.querySelector('.loading') && ws.readyState === WebSocket.OPEN) {
+                        console.log('Polling for snapshot...');
+                        ws.send(JSON.stringify({ type: 'request_snapshot' }));
+                    } else {
+                        clearInterval(pollInterval);
+                    }
+                }, 2000);
             };
 
             ws.onmessage = (event) => {
                 const msg = JSON.parse(event.data);
-                if (msg.type === 'snapshot' && msg.data && !userIsScrolling) {
-                    renderSnapshot(msg.data);
+                if (msg.type === 'snapshot' && msg.data) {
+                    console.log(`Rx Snapshot (${JSON.stringify(msg.data).length} bytes)`);
+                    // Always render, unless user is actively scrolling
+                    if (!userIsScrolling) {
+                        renderSnapshot(msg.data);
+                    }
                 }
             };
 
@@ -427,7 +481,7 @@
                     chatContent.innerHTML = `
                         <div class="loading">
                             <div class="spinner"></div>
-                            <span>Reconnecting...</span>
+                            <span>Connection lost. Reconnecting...</span>
                         </div>
                     `;
                     setTimeout(connectWebSocket, 1000);
@@ -503,6 +557,145 @@
                 sendMessage();
             }
         });
+
+        // Instance Handling
+        const instancesBtn = document.getElementById('instancesBtn');
+        const instancesModal = document.getElementById('instancesModal');
+        const instancesList = document.getElementById('instancesList');
+        const closeInstancesBtn = document.getElementById('closeInstancesBtn');
+        let activePort = null;
+
+        instancesBtn.addEventListener('click', () => {
+            instancesModal.classList.add('show');
+            fetchInstances();
+        });
+
+        closeInstancesBtn.addEventListener('click', () => {
+            instancesModal.classList.remove('show');
+        });
+
+        async function fetchInstances() {
+            instancesList.innerHTML = `
+                <div class="loading" style="padding:20px;">
+                     <div class="spinner"></div>
+                </div>
+            `;
+
+            try {
+                const res = await fetch('/instances', {
+                    headers: { 'Authorization': `Bearer ${authToken}` }
+                });
+
+                if (res.status === 401) {
+                    instancesModal.classList.remove('show');
+                    showLogin();
+                    return;
+                }
+
+                const data = await res.json();
+                activePort = data.activePort;
+                renderInstances(data.instances);
+            } catch (e) {
+                instancesList.innerHTML = `<div style="color:#ff6b6b;text-align:center;">Failed to load instances</div>`;
+            }
+        }
+
+        function renderInstances(instances) {
+            if (instances.length === 0) {
+                instancesList.innerHTML = `<div style="text-align:center;color:#666;">No instances found</div>`;
+                return;
+            }
+
+            instancesList.innerHTML = '';
+            instances.forEach(inst => {
+                const isItemActive = inst.port === activePort;
+                const el = document.createElement('div');
+                el.style.cssText = `
+                    padding: 12px;
+                    background: ${isItemActive ? '#3b82f6' : '#1a1a1a'};
+                    border: 1px solid #3a3a3a;
+                    border-radius: 8px;
+                    cursor: pointer;
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                `;
+                el.innerHTML = `
+                    <div style="font-weight:600;">Port ${inst.port}</div>
+                    <div style="font-size:12px;opacity:0.7;">${isItemActive ? 'Active' : 'Switch'}</div>
+                `;
+
+                if (!isItemActive) {
+                    el.addEventListener('click', () => switchInstance(inst.port));
+                    el.addEventListener('mouseover', () => el.style.borderColor = '#3b82f6');
+                    el.addEventListener('mouseout', () => el.style.borderColor = '#3a3a3a');
+                }
+
+                instancesList.appendChild(el);
+            });
+        }
+
+        async function switchInstance(port) {
+            // Show loading state
+            instancesList.innerHTML = `
+                <div class="loading" style="padding:20px;">
+                     <div class="spinner"></div>
+                     <span>Switching...</span>
+                </div>
+            `;
+
+            try {
+                const res = await fetch('/instance', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${authToken}`
+                    },
+                    body: JSON.stringify({ port })
+                });
+
+                if (res.ok) {
+                    // Success! Close modal and show loading state
+                    instancesModal.classList.remove('show');
+                    chatContent.innerHTML = `
+                        <div class="loading">
+                            <div class="spinner"></div>
+                            <span>Loading...</span>
+                        </div>
+                    `;
+
+                    // Request snapshot with retry mechanism
+                    let retries = 0;
+                    const maxRetries = 3;
+                    const retryDelay = 500;
+
+                    const requestSnapshot = () => {
+                        if (ws && ws.readyState === WebSocket.OPEN) {
+                            console.log(`Requesting snapshot (attempt ${retries + 1}/${maxRetries})`);
+                            ws.send(JSON.stringify({ type: 'request_snapshot' }));
+                        }
+                    };
+
+                    // Immediate request
+                    requestSnapshot();
+
+                    // Retry if still showing loading after delay
+                    const retryInterval = setInterval(() => {
+                        retries++;
+                        if (retries >= maxRetries || !document.querySelector('.loading')) {
+                            clearInterval(retryInterval);
+                            return;
+                        }
+                        requestSnapshot();
+                    }, retryDelay);
+
+                } else {
+                    throw new Error('Failed to switch');
+                }
+            } catch (e) {
+                fetchInstances(); // Reload list to show error state eventually, or just refresh
+            }
+        }
 
         messageInput.addEventListener('input', () => {
             messageInput.style.height = '44px';

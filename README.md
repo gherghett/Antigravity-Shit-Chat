@@ -5,43 +5,45 @@ Need to go to the bathroom? But Opus 4.5 might be done with that big task soon? 
 <img width="1957" height="1060" alt="screenshot" src="https://github.com/user-attachments/assets/95318065-d943-43f1-b05c-26fd7c0733dd" />
 
 
-A real-time mobile interface for monitoring and interacting with Antigravity chat sessions. 
+A real-time mobile interface for monitoring and interacting with Antigravity chat sessions.
+
+## Features
+
+- **Real-time Monitoring**: Mirrors the Antigravity chat interface to your phone.
+- **Secure Access**: Authenticated via QR Code (auto-generated token).
+- **Remote Control**: Type messages from your phone and inject them into Antigravity.
+- **Multi-Instance Support**: Run multiple Antigravity windows and switch between them on your phone.
 
 ## How It Works
 
 It's a simple system, but pretty hacky.
 
-The mobile monitor operates through three main components:
+### 1. Snapshot Capture
+The server connects to Antigravity via Chrome DevTools Protocol (CDP) and periodically captures snapshots of the chat interface. It captures HTML/CSS to preserve the exact look and feel.
 
-### 1. Reading (Snapshot Capture)
-The server connects to Antigravity via Chrome DevTools Protocol (CDP) and periodically captures **snapshots of the chat interface**:
-- Captures all CSS styles to preserve formatting
-- Captures the HTML of the chat interface
-- Buttons and everything that you wont be able to click
-- Polls every 3 seconds and only updates when content changes
-
-### 2. Injecting (Message Sending)
-Antigravity must be run in chrome with remote debugging enabled.
-Messages typed in the mobile interface are injected directly into Antigravity:
-- Locates the Antigravity chat input editor
-- Inserts the message text and triggers submission
-- Handles the input safely without interfering with ongoing operations
-
-### 3. Serving (Web Interface)
-A lightweight web server provides the mobile UI:
-- WebSocket connection for real-time updates
-- Auto-refresh when new content appears
-- Clean, responsive interface optimized for mobile devices
-- Send messages directly from your phone
+### 2. Secure Web Interface
+A lightweight web server (Express + WebSocket) serves the mobile UI. It requires a security token to connect, which is embedded in the QR code displayed in your terminal.
 
 ## Setup
 
-### 1. Start Antigravity with CDP
+### 1. Start Antigravity with Remote Debugging
 
-Start Antigravity with Chrome DevTools Protocol enabled:
+You need to start Antigravity with the `--remote-debugging-port` flag.
 
-```bash
-antigravity . --remote-debugging-port=9000
+**Single Instance:**
+```powershell
+& "path\to\Antigravity.exe" --remote-debugging-port=9222
+```
+
+**Running Multiple Instances:**
+If you want to run a *second* instance, you MUST specify a separate user data directory, or Electron will just focus the existing window.
+
+```powershell
+# Instance 1 (Port 9000)
+& "path\to\Antigravity.exe" --remote-debugging-port=9000 --user-data-dir="C:\Temp\AG_Instance_1"
+
+# Instance 2 (Port 9222)
+& "path\to\Antigravity.exe" --remote-debugging-port=9222 --user-data-dir="C:\Temp\AG_Instance_2"
 ```
 
 ### 2. Install Dependencies
@@ -52,24 +54,27 @@ npm install
 
 ### 3. Start the Monitor
 
-**Development mode** (with hot reload):
 ```bash
 npm run dev
 ```
 
-**Production mode**:
-```bash
-npm run build
-npm start
-```
+The terminal will generate a **QR Code**.
 
-### 4. Access from Mobile
+### 4. Connect
 
-Open your browser in the bathroom and navigate to:
-```
-http://<your-local-ip>:3000
-```
+1.  **Scan the QR Code** with your phone.
+2.  It will automatically open the monitor in your browser with the correct authentication token.
+3.  **Authentication**: If the token is valid, you will see the chat immediately.
 
-This is over local network, so it will not work if you are on a different network, unless you use a VPN or something.
+### 5. Multi-Instance Switching
 
-The interface will automatically connect and display your Antigravity conversation in almost real-time.
+If the monitor detects multiple running Antigravity instances (e.g., ports 9000 and 9222):
+1.  Click the **Monitor Icon** (🖥️) in the top-right corner of your phone screen.
+2.  Select the instance/port you want to view.
+3.  The view will update instantly (cached state) and then sync with the live window.
+
+## Troubleshooting
+
+- **"Connection Refused"**: Ensure Antigravity is running with the correct `--remote-debugging-port`.
+- **"Blank Screen"**: Try refreshing the page on your phone. If persisting, ensure the Antigravity window on your computer is not minimized/sleeping.
+- **"Address in Use"**: If `npm run dev` fails, make sure you don't have another terminal window running the server.

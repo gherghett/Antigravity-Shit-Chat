@@ -3,13 +3,19 @@ import express, { Request, Response } from 'express';
 import { WebSocketServer, WebSocket } from 'ws';
 import http from 'http';
 import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
+import { dirname, join, basename } from 'path';
 import { readFileSync, existsSync } from 'fs';
+import qrcode from 'qrcode-terminal';
+import os from 'os';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-const PORTS = [9000, 9001, 9002, 9003];
+const PORTS = [
+    9000, 9001, 9002, 9003,
+    9222, 9223, 9224, 9225, 9226, 9227, 9228, 9229, 9230,
+    5858
+];
 const POLL_INTERVAL = 3000;
 const HTTP_TIMEOUT = 2000; // 2 seconds max for discovery
 const CDP_CONTEXT_WAIT = 200; // Wait for contexts (was 1000ms!)
@@ -79,6 +85,13 @@ let lastSnapshot: Snapshot | null = null;
 let lastSnapshotHash: string | null = null;
 let wssRef: WebSocketServer | null = null;
 
+// Snapshot cache
+const snapshotCache = new Map<number, Snapshot>(); // Cache by port
+
+// Multi-instance state
+let availableInstances: CDPInfo[] = [];
+let activePort: number | null = null;
+
 // Helper: HTTP GET JSON with timeout
 function getJson<T>(url: string, timeout = HTTP_TIMEOUT): Promise<T> {
     return new Promise((resolve, reject) => {
@@ -98,25 +111,46 @@ function getJson<T>(url: string, timeout = HTTP_TIMEOUT): Promise<T> {
     });
 }
 
-// Find Antigravity CDP endpoint - parallel with race
-async function discoverCDP(): Promise<CDPInfo> {
-    // Try all ports in parallel, return first success
+// Find all Antigravity CDP endpoints
+async function discoverInstances(): Promise<CDPInfo[]> {
     const attempts = PORTS.map(async (port): Promise<CDPInfo | null> => {
         try {
+            console.log(`Checking port ${port}...`);
             const list = await getJson<CDPTarget[]>(`http://127.0.0.1:${port}/json/list`);
-            const found = list.find(t => t.url?.includes('workbench.html') || (t.title && t.title.includes('workbench')));
-            if (found?.webSocketDebuggerUrl) {
-                return { port, url: found.webSocketDebuggerUrl };
+            console.log(`Port ${port} response:`, JSON.stringify(list));
+
+            // Look for any page that seems to be the workbench
+            // Priority 1: Match project name in title (e.g. "Antigravity-Shit-Chat")
+            const projectName = basename(process.cwd());
+            let found = list.find(t =>
+                (t.url?.includes('workbench.html') || t.title?.includes('workbench')) &&
+                t.title?.includes(projectName)
+            );
+
+            // Priority 2: Any workbench
+            if (!found) {
+                found = list.find(t => t.url?.includes('workbench.html') || (t.title && t.title.includes('workbench')));
             }
-        } catch { }
+
+            if (!found && list.length > 0) {
+                console.warn(`⚠️ Port ${port} has targets but none matched 'workbench' or '${projectName}':`, list.map(t => t.title || t.url));
+            }
+
+            if (found?.webSocketDebuggerUrl) {
+                console.log(`🎯 Matched target: "${found.title}"`);
+                return {
+                    port,
+                    url: found.webSocketDebuggerUrl
+                };
+            }
+        } catch (err) {
+            console.log(`❌ Port ${port} failed: ${(err as Error).message}`);
+        }
         return null;
     });
 
     const results = await Promise.all(attempts);
-    const found = results.find(r => r !== null);
-
-    if (found) return found;
-    throw new Error('CDP not found. Is Antigravity started with --remote-debugging-port=9000?');
+    return results.filter((r): r is CDPInfo => r !== null);
 }
 
 // Connect to CDP
@@ -238,7 +272,7 @@ async function captureSnapshot(cdp: CDPConnection): Promise<Snapshot | null> {
                     
                     // 2. Trim empty lines AND lone prompts from the START of the slice
                     // This fixes the "$ $ %" artifacts reported by the user
-                    const promptOnlyRegex = /^[$%>#]\s*$/;
+                    const promptOnlyRegex = /^[$%>#]\\s*$/;
                     while (linesToShow.length > 0 && (linesToShow[0].trim() === '' || promptOnlyRegex.test(linesToShow[0].trim()))) {
                         linesToShow.shift();
                     }
@@ -349,7 +383,7 @@ async function captureSnapshot(cdp: CDPConnection): Promise<Snapshot | null> {
 async function injectMessage(cdp: CDPConnection, text: string): Promise<InjectResult> {
     // SAFE: Use JSON.stringify to properly escape the string for JS injection
     const safeText = JSON.stringify(text); // e.g. "Hello \"world\""
-    
+
     const EXPRESSION = `(async () => {
         // Find visible editor (Antigravity supports message queuing even during generation)
         const editors = [...document.querySelectorAll('#cascade [data-lexical-editor="true"][contenteditable="true"][role="textbox"]')]
@@ -386,8 +420,6 @@ async function injectMessage(cdp: CDPConnection, text: string): Promise<InjectRe
 
     let lastResult: InjectResult = { ok: false, reason: "no_context" };
 
-
-
     for (const ctx of cdp.contexts) {
         try {
             const result = await cdp.call("Runtime.evaluate", {
@@ -398,7 +430,6 @@ async function injectMessage(cdp: CDPConnection, text: string): Promise<InjectRe
             });
 
             const injResult = result.result?.value as InjectResult | undefined;
-
 
             if (injResult) {
                 // Return immediately if successful
@@ -444,6 +475,14 @@ function broadcastSnapshot(snapshot: Snapshot): void {
 
 // Update snapshot and broadcast if changed
 async function updateSnapshot(): Promise<boolean> {
+    if (!cdpConnection) {
+        try {
+            await initCDP(); // Try to connect
+        } catch (e) {
+            console.log(`⚠️ Retry failed: ${(e as Error).message}`);
+            return false;
+        }
+    }
     if (!cdpConnection) return false;
 
     try {
@@ -454,6 +493,7 @@ async function updateSnapshot(): Promise<boolean> {
             if (hash !== lastSnapshotHash) {
                 lastSnapshot = snapshot;
                 lastSnapshotHash = hash;
+                if (activePort) snapshotCache.set(activePort, snapshot); // Save to cache
                 broadcastSnapshot(snapshot);
                 return true;
             }
@@ -465,20 +505,89 @@ async function updateSnapshot(): Promise<boolean> {
 }
 
 // Initialize CDP connection
-async function initCDP(): Promise<void> {
-    console.log('🔍 Discovering CDP endpoint...');
+async function initCDP(targetPort?: number): Promise<void> {
+    console.log('🔍 Scanning for Antigravity instances...');
     const startTime = Date.now();
 
-    const cdpInfo = await discoverCDP();
-    console.log(`✅ Found on port ${cdpInfo.port} (${Date.now() - startTime}ms)`);
+    // Reset state to ensure fresh broadcast for new instance
+    lastSnapshotHash = null;
+    // We don't null lastSnapshot yet so clients don't flicker to empty, 
+    // but the next update will force-overwrite it.
 
-    console.log('🔌 Connecting...');
-    cdpConnection = await connectCDP(cdpInfo.url);
+    // Always scan fresh
+    availableInstances = await discoverInstances();
+
+    if (availableInstances.length === 0) {
+        throw new Error('No Antigravity instances found. Is it started with --remote-debugging-port=9000?');
+    }
+
+    let target: CDPInfo | undefined;
+
+    if (targetPort) {
+        target = availableInstances.find(i => i.port === targetPort);
+        if (!target) {
+            console.warn(`⚠️ Requested port ${targetPort} not found, falling back to first available.`);
+        }
+    }
+
+    // Default to first available if no target or target not found
+    if (!target) {
+        target = availableInstances[0];
+    }
+
+    // HIT CACHE: If found, send it IMMEDIATELY
+    if (snapshotCache.has(target.port)) {
+        console.log(`📦 Cache hit for port ${target.port}. Sending immediately.`);
+        lastSnapshot = snapshotCache.get(target.port)!;
+        // Broadcast right now - client will render this while we connect
+        broadcastSnapshot(lastSnapshot);
+        // Do NOT set lastSnapshotHash yet - we want updateSnapshot to re-verify it
+        // actually, we should set it so we don't spam if identical.
+        lastSnapshotHash = hashString(lastSnapshot.html);
+    } else {
+        lastSnapshotHash = null;
+    }
+
+    if (activePort === target.port && cdpConnection) {
+        console.log(`✅ Already connected to port ${target.port}`);
+        return;
+    }
+
+    // Close existing connection if any
+    if (cdpConnection) {
+        try {
+            console.log('🔌 Disconnecting previous session...');
+            cdpConnection.ws.removeAllListeners();
+            cdpConnection.ws.close();
+        } catch (e) { console.error('Error closing socket:', e); }
+        cdpConnection = null;
+        // Small delay to let the socket strictly close
+        await new Promise(r => setTimeout(r, 100));
+    }
+
+
+    console.log(`🔌 Connecting to instance on port ${target.port}...`);
+    cdpConnection = await connectCDP(target.url);
+    activePort = target.port;
+
     console.log(`✅ Connected! ${cdpConnection.contexts.length} contexts (${Date.now() - startTime}ms total)`);
 
-    // Capture first snapshot immediately
+    // Capture first snapshot immediately and FORCE broadcast
     console.log('📸 Capturing initial snapshot...');
-    await updateSnapshot();
+    lastSnapshotHash = null; // Force a fresh broadcast
+    const gotSnapshot = await updateSnapshot();
+
+    // Even if updateSnapshot returned false (no change), we still have lastSnapshot from cache
+    // Broadcast it to ensure all clients get it
+    if (!gotSnapshot && lastSnapshot) {
+        console.log('📤 Broadcasting cached snapshot to clients...');
+        broadcastSnapshot(lastSnapshot);
+    }
+
+    // Save to cache for future switches
+    if (lastSnapshot && activePort) {
+        snapshotCache.set(activePort, lastSnapshot);
+    }
 }
 
 // Background polling
@@ -506,7 +615,7 @@ async function createServer(): Promise<{ server: http.Server; wss: WebSocketServ
         if (authHeader === `Bearer ${AUTH_TOKEN}`) {
             return next();
         }
-        
+
         // Also check query param for easy testing/some clients
         if (req.query.token === AUTH_TOKEN) {
             return next();
@@ -527,6 +636,46 @@ async function createServer(): Promise<{ server: http.Server; wss: WebSocketServ
             return res.status(503).json({ error: 'No snapshot available yet' });
         }
         res.json(lastSnapshot);
+    });
+
+    // List available instances
+    app.get('/instances', async (_req: Request, res: Response) => {
+        // Rescan on request to be fresh
+        try {
+            availableInstances = await discoverInstances();
+            res.json({
+                activePort,
+                instances: availableInstances.map(i => ({ port: i.port, url: i.url }))
+            });
+        } catch (e) {
+            res.status(500).json({ error: (e as Error).message });
+        }
+    });
+
+    // Switch instance
+    app.post('/instance', async (req: Request, res: Response) => {
+        const { port } = req.body as { port: number };
+        console.log(`🔀 User requested switch to port ${port}`);
+
+        if (!port) return res.status(400).json({ error: 'Port required' });
+
+        try {
+            if (activePort !== port) {
+                console.log(`   Attempting to connect to port ${port}...`);
+                await initCDP(port);
+                console.log(`   ✅ Switch successful.`);
+            } else {
+                console.log(`   Already connected to ${port}, resending cache.`);
+                // Force broadcast of current cache
+                if (activePort && snapshotCache.has(activePort)) {
+                    broadcastSnapshot(snapshotCache.get(activePort)!);
+                }
+            }
+            res.json({ success: true, activePort });
+        } catch (e) {
+            console.error(`   ❌ Switch failed: ${(e as Error).message}`);
+            res.status(500).json({ error: (e as Error).message });
+        }
     });
 
     // Send message
@@ -557,20 +706,37 @@ async function createServer(): Promise<{ server: http.Server; wss: WebSocketServ
         const token = url.searchParams.get('token');
 
         if (token !== AUTH_TOKEN) {
+            console.log('🚫 Client rejected (bad token)');
             ws.close(1008, 'Unauthorized');
             return;
         }
 
-        console.log('📱 Client connected (Authenticated)');
+        console.log(`📱 Client connected (Authenticated) - lastSnapshot: ${lastSnapshot ? 'YES' : 'NULL'}, activePort: ${activePort}`);
 
-        // Send current snapshot immediately on connect
+        // Send current snapshot immediately on connect if available
         if (lastSnapshot) {
+            console.log(`📤 Sending cached snapshot to new client (${JSON.stringify(lastSnapshot).length} bytes)`);
             ws.send(JSON.stringify({
                 type: 'snapshot',
                 data: lastSnapshot,
                 timestamp: new Date().toISOString()
             }));
+        } else {
+            console.log('⚠️  No snapshot cached yet, client will need to wait for poll');
         }
+
+        ws.on('message', (data) => {
+            try {
+                const msg = JSON.parse(data.toString());
+                if (msg.type === 'request_snapshot' && lastSnapshot) {
+                    ws.send(JSON.stringify({
+                        type: 'snapshot',
+                        data: lastSnapshot,
+                        timestamp: new Date().toISOString()
+                    }));
+                }
+            } catch (e) { }
+        });
 
         ws.on('close', () => {
             console.log('📱 Client disconnected');
@@ -585,14 +751,42 @@ async function main(): Promise<void> {
     try {
         const startTime = Date.now();
 
-        await initCDP();
+        try {
+            await initCDP();
+        } catch (err) {
+            console.log('⚠️  Initial connection failed, will keep retrying...');
+        }
+
         const { server } = await createServer();
-        startPolling();
+        startPolling(); // The polling loop will attempt to reconnect
 
         const PORT = process.env.PORT || 3000;
         server.listen(PORT, () => {
+            // Find local IP
+            const interfaces = os.networkInterfaces();
+            let localIp = 'localhost';
+
+            for (const name of Object.keys(interfaces)) {
+                for (const iface of interfaces[name] || []) {
+                    // Skip internal and non-IPv4 addresses
+                    if (!iface.internal && iface.family === 'IPv4') {
+                        localIp = iface.address;
+                        break;
+                    }
+                }
+                if (localIp !== 'localhost') break;
+            }
+
+            const fullUrl = `http://${localIp}:${PORT}/?token=${AUTH_TOKEN}`;
+
             console.log(`\n🚀 Ready in ${Date.now() - startTime}ms`);
-            console.log(`📱 http://0.0.0.0:${PORT}`);
+            console.log(`📱 Scan to connect:`);
+
+            qrcode.generate(fullUrl, { small: true });
+
+            console.log(`\nLocal:   http://localhost:${PORT}`);
+            console.log(`Network: ${fullUrl}`);
+            console.log(`\n🔑 Key: ${AUTH_TOKEN}`);
         });
     } catch (err) {
         console.error('❌ Fatal:', (err as Error).message);
