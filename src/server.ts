@@ -699,6 +699,106 @@ async function createServer(): Promise<{ server: http.Server; wss: WebSocketServ
         }
     });
 
+    // Handle clicks
+    app.post('/click', async (req: Request, res: Response) => {
+        const { text, tag, x, y } = req.body as { text?: string, tag?: string, x?: number, y?: number };
+
+        if (!cdpConnection) {
+            return res.status(503).json({ error: 'CDP not connected' });
+        }
+
+        console.log(`🖱️  Click request: "${text || ''}" <${tag || '?'}> at (${x},${y})`);
+
+        // Smart Click Script
+        const CLICK_SCRIPT = `(() => {
+            const textToFind = ${JSON.stringify(text || '')};
+            const tagToFind = ${JSON.stringify(tag || '*')};
+            
+            function isVisible(el) {
+                const rect = el.getBoundingClientRect();
+                return rect.width > 0 && rect.height > 0 && window.getComputedStyle(el).visibility !== 'hidden';
+            }
+
+            function clickElement(el) {
+                 el.click();
+                 el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+                 el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+                 el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+                 // Also pointer events for modern frameworks
+                 try {
+                     el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+                     el.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+                 } catch(e) {}
+            }
+
+            // 1. Try to find precise text match if provided
+            if (textToFind && textToFind.length > 0) {
+                const candidates = Array.from(document.querySelectorAll(tagToFind));
+                
+                // Prioritize visible elements
+                const visibleCandidates = candidates.filter(isVisible);
+
+                // Try exact match first
+                let match = visibleCandidates.find(el => el.innerText && el.innerText.trim() === textToFind);
+                
+                // Fallback to substring
+                if (!match) {
+                     match = visibleCandidates.find(el => el.innerText && el.innerText.includes(textToFind));
+                }
+                
+                if (match) {
+                    // Traverse up to find clickable parent if the specific element isn't a button/link
+                    let interactive = match;
+                    let parent = match.parentElement;
+                    while (parent && parent !== document.body) {
+                        const tag = parent.tagName.toLowerCase();
+                        if (tag === 'button' || tag === 'a' || parent.getAttribute('role') === 'button') {
+                            interactive = parent;
+                            break;
+                        }
+                        parent = parent.parentElement;
+                    }
+
+                    clickElement(interactive);
+                    return { success: true, method: 'text_match', target: interactive.className || interactive.tagName };
+                }
+            }
+            
+            return { success: false, reason: 'element_not_found' };
+        })()`;
+
+        try {
+            // Try in all contexts (main page, iframes, etc.)
+            let handled = false;
+            for (const ctx of cdpConnection.contexts) {
+                const result = await cdpConnection.call("Runtime.evaluate", {
+                    expression: CLICK_SCRIPT,
+                    returnByValue: true,
+                    awaitPromise: true,
+                    contextId: ctx.id
+                });
+
+                const val = result.result?.value as { success: boolean, method?: string, reason?: string };
+                if (val && val.success) {
+                    console.log(`   ✅ Clicked via ${val.method}`);
+                    handled = true;
+                    break;
+                }
+            }
+
+            if (handled) {
+                // Update snapshot after click
+                setTimeout(updateSnapshot, 300);
+                res.json({ success: true });
+            } else {
+                res.status(404).json({ error: 'Could not find element to click' });
+            }
+
+        } catch (e) {
+            res.status(500).json({ error: (e as Error).message });
+        }
+    });
+
     // WebSocket - send current snapshot on connect
     wss.on('connection', (ws, req) => {
         // Parse token from URL query params

@@ -223,6 +223,29 @@
             font-weight: 600;
             cursor: pointer;
         }
+
+        @keyframes ripple {
+            0% {
+                transform: translate(-50%, -50%) scale(0);
+                opacity: 0.8;
+            }
+
+            100% {
+                transform: translate(-50%, -50%) scale(2);
+                opacity: 0;
+            }
+        }
+
+        .click-ripple {
+            position: fixed;
+            width: 20px;
+            height: 20px;
+            background: rgba(255, 255, 255, 0.8);
+            border-radius: 50%;
+            pointer-events: none;
+            animation: ripple 0.6s ease-out forwards;
+            z-index: 9999;
+        }
     </style>
 </head>
 
@@ -702,7 +725,64 @@
             messageInput.style.height = Math.min(messageInput.scrollHeight, 120) + 'px';
         });
 
+        // Click Forwarding Logic
+        chatContent.addEventListener('click', async (e) => {
+            if (!authToken) return;
+
+            // 1. Identify what was clicked
+            const target = e.target;
+            const text = target.innerText || '';
+            const tag = target.tagName.toLowerCase();
+
+            // Ignore container clicks
+            if (tag === 'div' && target.id === 'chatContent') return;
+
+            console.log(`Click: "${text}" <${tag}>`);
+
+            // 2. Visual Feedback (Ripple effect)
+            const rect = target.getBoundingClientRect();
+            const ripple = document.createElement('div');
+            ripple.className = 'click-ripple';
+            ripple.style.left = `${e.clientX}px`;
+            ripple.style.top = `${e.clientY}px`;
+            document.body.appendChild(ripple);
+
+            setTimeout(() => ripple.remove(), 1000);
+
+            // 3. Send to server
+            try {
+                // Calculate relative coordinates just in case fallback is needed
+                // (Though text matching is primary strategy)
+                const containerRect = chatContent.getBoundingClientRect();
+                const x = e.clientX - containerRect.left; // Rough relative
+                const y = e.clientY - containerRect.top;
+
+                const res = await fetch('/click', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${authToken}`
+                    },
+                    body: JSON.stringify({
+                        text: text.substring(0, 50), // Send first 50 chars only
+                        tag: tag,
+                        x: Math.round(e.clientX), // Send raw client coords
+                        y: Math.round(e.clientY)
+                    })
+                });
+
+                if (res.ok) {
+                    console.log('Click sent successfully');
+                } else {
+                    console.warn('Click failed on server');
+                }
+            } catch (err) {
+                console.error('Network error sending click:', err);
+            }
+        });
+
         // Start
+        // ... (rest of code)
         connectWebSocket();
     </script>
 </body>
