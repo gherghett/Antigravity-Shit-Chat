@@ -1,0 +1,77 @@
+{
+    "name": "shitchat-antigravity",
+    "displayName": "Shit-Chat Integration",
+    "type": "module",
+    "description": "Control your Shit-Chat mobile monitor from within Antigravity",
+    "version": "1.0.0",
+    "icon": "icon.png",
+    "publisher": "ghergher",
+    "engines": {
+        "vscode": "^1.75.0"
+    },
+    "categories": [
+        "Other"
+    ],
+    "activationEvents": [
+        "*"
+    ],
+    "main": "./extension.js",
+    "contributes": {
+        "commands": [
+            {
+                "command": "shitchat.start",
+                "title": "Shit-Chat: Start Mobile Monitor",
+                "icon": "$(play)"
+            },
+            {
+                "command": "shitchat.stop",
+                "title": "Shit-Chat: Stop Mobile Monitor",
+                "icon": "$(stop)"
+            },
+            {
+                "command": "shitchat.settings",
+                "title": "Shit-Chat: Open Control Panel",
+                "icon": "$(settings-gear)"
+            },
+            {
+                "command": "shitchat.setup2fa",
+                "title": "Shit-Chat: Setup 2FA (QR Code)"
+            },
+            {
+                "command": "shitchat.openMobile",
+                "title": "Shit-Chat: Open Mobile UI"
+            }
+        ],
+        "menus": {
+            "commandPalette": [
+                {
+                    "command": "shitchat.start",
+                    "when": "true"
+                },
+                {
+                    "command": "shitchat.stop",
+                    "when": "true"
+                },
+                {
+                    "command": "shitchat.settings",
+                    "when": "true"
+                },
+                {
+                    "command": "shitchat.setup2fa",
+                    "when": "true"
+                },
+                {
+                    "command": "shitchat.openMobile",
+                    "when": "true"
+                }
+            ]
+        }
+    },
+    "dependencies": {
+        "@otplib/preset-default": "^12.0.1",
+        "cookie-parser": "^1.4.7",
+        "express": "^5.2.1",
+        "qrcode": "^1.5.4",
+        "ws": "^8.19.0"
+    }
+}

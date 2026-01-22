@@ -1,0 +1,247 @@
+:root {
+    --bg: var(--vscode-editor-background, #1e1e1e);
+    --text: var(--vscode-foreground, #cccccc);
+    --text-dim: var(--vscode-descriptionForeground, #888888);
+    --card-bg: var(--vscode-sideBar-background, #252526);
+    --border: var(--vscode-panel-border, #3c3c3c);
+    --primary: var(--vscode-button-background, #0e639c);
+    --primary-hover: var(--vscode-button-hoverBackground, #1177bb);
+    --success: var(--vscode-testing-iconPassed, #89d185);
+    --warning: var(--vscode-inputValidation-warningBorder, #b89500);
+    --link: var(--vscode-textLink-foreground, #3794ff);
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    font-family: var(--vscode-font-family, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
+    font-size: var(--vscode-font-size, 13px);
+    background: var(--bg);
+    color: var(--text);
+    margin: 0;
+    padding: 16px;
+}
+
+.container {
+    max-width: 600px;
+    margin: 0 auto;
+}
+
+h1 {
+    font-size: 18px;
+    font-weight: 600;
+    margin: 0 0 16px 0;
+}
+
+h2 {
+    font-size: 14px;
+    font-weight: 600;
+    margin: 0 0 8px 0;
+}
+
+.card {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 16px;
+    margin-bottom: 12px;
+}
+
+.card.highlight {
+    border-color: var(--primary);
+}
+
+.note {
+    font-size: 12px;
+    color: var(--text-dim);
+    margin: 0 0 12px 0;
+    line-height: 1.4;
+}
+
+code {
+    background: rgba(255, 255, 255, 0.1);
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-size: 12px;
+}
+
+.status-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.status-row button {
+    margin-left: auto;
+}
+
+.dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--text-dim);
+    flex-shrink: 0;
+}
+
+.dot.active {
+    background: var(--success);
+}
+
+.dot.pulsing {
+    animation: pulse 1s ease-in-out infinite;
+    background: var(--warning);
+}
+
+@keyframes pulse {
+
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.4;
+    }
+}
+
+.timestamp {
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-left: auto;
+}
+
+.url-box {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(0, 0, 0, 0.2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 8px 12px;
+    margin: 8px 0;
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-size: 12px;
+}
+
+.url-box.success {
+    border-color: var(--success);
+}
+
+.url-box a {
+    color: var(--link);
+    text-decoration: none;
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.url-box a:hover {
+    text-decoration: underline;
+}
+
+.url-box button {
+    padding: 4px 8px;
+    font-size: 12px;
+}
+
+.input-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.input-row label {
+    font-size: 12px;
+    color: var(--text-dim);
+}
+
+.input-row input {
+    width: 80px;
+    padding: 4px 8px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    background: var(--vscode-input-background, #3c3c3c);
+    color: var(--text);
+    font-size: 13px;
+}
+
+.input-row input:focus {
+    outline: none;
+    border-color: var(--primary);
+}
+
+button {
+    padding: 6px 14px;
+    border: none;
+    border-radius: 3px;
+    background: var(--primary);
+    color: white;
+    font-size: 13px;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+button:hover:not(:disabled) {
+    background: var(--primary-hover);
+}
+
+button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+button.secondary {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text);
+}
+
+button.secondary:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.button-row {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.hint {
+    font-size: 11px;
+    padding: 6px 10px;
+    border-radius: 4px;
+    margin: 8px 0;
+    background: rgba(255, 255, 255, 0.05);
+    border-left: 3px solid var(--border);
+}
+
+.hint.warning {
+    border-left-color: var(--warning);
+    background: rgba(184, 149, 0, 0.1);
+}
+
+.qr-container {
+    background: white;
+    padding: 12px;
+    border-radius: 6px;
+    display: inline-block;
+    margin: 12px 0;
+}
+
+.qr-container img {
+    display: block;
+    width: 160px;
+    height: 160px;
+}
+
+.footer {
+    text-align: center;
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-top: 16px;
+}

@@ -139,6 +139,7 @@
     </div>
 
     <div class="input-section">
+        <button id="newChatBtn" title="New Chat (⇧⌘L)">➕</button>
         <textarea id="messageInput" placeholder="Type a message..."></textarea>
         <button id="sendBtn">Send</button>
     </div>
@@ -153,7 +154,8 @@
         let ws = null;
 
         function connect() {
-            ws = new WebSocket(`ws://${location.host}`);
+            const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            ws = new WebSocket(`${wsProtocol}//${location.host}`);
 
             ws.onmessage = (event) => {
                 const data = JSON.parse(event.data);
@@ -179,22 +181,31 @@
         }
 
         function renderTabs() {
-            tabsContainer.innerHTML = cascades.map(c => `
+            tabsContainer.innerHTML = cascades.map(c => {
+                // Extract workspace folder name from window title like "folder — file.ext"
+                const workspaceName = c.window?.split(' — ')[0] || c.title || 'Untitled';
+                return `
                 <div class="cascade-tab ${c.id === currentCascadeId ? 'active' : ''} ${c.active ? 'active-window' : ''}" 
                      onclick="selectCascade('${c.id}')">
                     <div class="status"></div>
-                    ${c.title || 'Untitled'}
+                    ${workspaceName}
                 </div>
-            `).join('');
+            `}).join('');
 
             if (cascades.length === 0) {
                 tabsContainer.innerHTML = '<div class="cascade-tab">No chats found</div>';
             }
         }
 
-        function selectCascade(id) {
+        async function selectCascade(id) {
             currentCascadeId = id;
             renderTabs();
+
+            // Tell server to only poll this cascade (bandwidth optimization)
+            try {
+                await fetch(`/watch/${id}`, { method: 'POST' });
+            } catch (e) { }
+
             loadCascade(id);
         }
 
@@ -286,6 +297,27 @@
                 sendMessage();
             }
         });
+
+        async function newChat() {
+            if (!currentCascadeId) return;
+
+            const btn = document.getElementById('newChatBtn');
+            btn.textContent = '⏳';
+            btn.disabled = true;
+
+            try {
+                const res = await fetch(`/new-chat/${currentCascadeId}`, { method: 'POST' });
+                if (!res.ok) throw new Error('Failed');
+                btn.textContent = '✓';
+                setTimeout(() => { btn.textContent = '➕'; btn.disabled = false; }, 1000);
+            } catch (e) {
+                console.error("New chat failed", e);
+                btn.textContent = '❌';
+                setTimeout(() => { btn.textContent = '➕'; btn.disabled = false; }, 2000);
+            }
+        }
+
+        document.getElementById('newChatBtn').onclick = newChat;
 
         connect();
     </script>

@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; img-src vscode-webview-resource: https: data:; script-src 'unsafe-inline'; style-src 'unsafe-inline';">
+    <style>
+        :root {
+            --bg: #1a1a2e;
+            --card-bg: rgba(255, 255, 255, 0.05);
+            --primary: #3b82f6;
+            --success: #10b981;
+            --danger: #f43f5e;
+            --text: #ffffff;
+            --text-dim: #94a3b8;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            margin: 0;
+            padding: 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 4px;
+        }
+
+        .header h1 {
+            font-size: 20px;
+            font-weight: 600;
+            margin: 0;
+        }
+
+        .card {
+            background: var(--card-bg);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+        }
+
+        .card-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text);
+            margin-bottom: 4px;
+        }
+
+        .card-note {
+            font-size: 12px;
+            color: var(--text-dim);
+            line-height: 1.5;
+        }
+
+        .status-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .status-info {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .status-label {
+            font-size: 14px;
+            color: var(--text-dim);
+        }
+
+        .status-value {
+            font-size: 16px;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #4b5563;
+        }
+
+        .dot.active {
+            background: var(--success);
+            box-shadow: 0 0 12px var(--success);
+        }
+
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 44px;
+            height: 24px;
+        }
+
+        .switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #334155;
+            transition: .3s;
+            border-radius: 24px;
+        }
+
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 18px;
+            width: 18px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            transition: .3s;
+            border-radius: 50%;
+        }
+
+        input:checked+.slider {
+            background-color: var(--primary);
+        }
+
+        input:checked+.slider:before {
+            transform: translateX(20px);
+        }
+
+        .url-box {
+            background: rgba(0, 0, 0, 0.2);
+            border: 1px dashed rgba(255, 255, 255, 0.2);
+            border-radius: 8px;
+            padding: 12px;
+            font-family: monospace;
+            font-size: 12px;
+            color: var(--primary);
+            word-break: break-all;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .url-box a {
+            color: var(--primary);
+            text-decoration: none;
+        }
+
+        .url-box a:hover {
+            text-decoration: underline;
+        }
+
+        .copy-btn {
+            background: none;
+            border: none;
+            color: var(--text-dim);
+            cursor: pointer;
+            padding: 4px;
+            border-radius: 4px;
+            flex-shrink: 0;
+        }
+
+        .copy-btn:hover {
+            color: var(--text);
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .footer {
+            font-size: 12px;
+            color: var(--text-dim);
+            text-align: center;
+            margin-top: 8px;
+        }
+
+        button.action-btn {
+            background: var(--primary);
+            color: white;
+            border: none;
+            padding: 10px 16px;
+            border-radius: 8px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: 0.2s;
+        }
+
+        button.action-btn:hover {
+            opacity: 0.9;
+        }
+
+        .input-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .input-row label {
+            font-size: 13px;
+            color: var(--text-dim);
+        }
+
+        .input-row input[type="number"] {
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 6px;
+            padding: 8px 12px;
+            color: var(--text);
+            font-size: 14px;
+            width: 80px;
+        }
+
+        .input-row input[type="number"]:focus {
+            outline: none;
+            border-color: var(--primary);
+        }
+    </style>
+</head>
+
+<body>
+    <div class="header">
+        <h1>💩 Shit-Chat Control Panel</h1>
+    </div>
+
+    <!-- Server Card -->
+    <div class="card">
+        <div class="card-title">🖥️ Local Server</div>
+        <div class="card-note">
+            Runs on your machine. Connects to Antigravity via CDP (Chrome DevTools Protocol) to capture chat snapshots.
+            Requires <code>--remote-debugging-port=9000</code> when starting Antigravity.
+        </div>
+        <div class="status-row">
+            <div class="status-info">
+                <div class="status-value">
+                    <div id="server-dot" class="dot"></div>
+                    <span id="server-status">Stopped</span>
+                </div>
+            </div>
+            <label class="switch">
+                <input type="checkbox" id="server-toggle">
+                <span class="slider"></span>
+            </label>
+        </div>
+        <div id="local-url-container" class="url-box" style="display: none;">
+            <a id="local-url" href="#" target="_blank">http://localhost:9420</a>
+            <button class="copy-btn" id="copy-local-btn" title="Copy URL">📋</button>
+        </div>
+        <div class="input-row">
+            <label for="port-input">Port:</label>
+            <input type="number" id="port-input" value="9420" min="1024" max="65535">
+            <button class="action-btn" id="apply-port-btn" style="padding: 6px 12px; font-size: 12px;">Apply</button>
+        </div>
+    </div>
+
+    <!-- Tunnel Card -->
+    <div class="card">
+        <div class="card-title">🌐 Cloudflare Tunnel</div>
+        <div class="card-note">
+            Exposes your local server to the internet via a secure Cloudflare tunnel. Use this URL to access the
+            mobile UI from anywhere. A new tunnel URL is generated each session.
+        </div>
+        <div class="status-row">
+            <div class="status-info">
+                <div class="status-value">
+                    <div id="tunnel-dot" class="dot"></div>
+                    <span id="tunnel-status">Disconnected</span>
+                </div>
+            </div>
+            <label class="switch">
+                <input type="checkbox" id="tunnel-toggle">
+                <span class="slider"></span>
+            </label>
+        </div>
+        <div id="tunnel-url-container" class="url-box" style="display: none;">
+            <a id="tunnel-url" href="#" target="_blank">Loading...</a>
+            <button class="copy-btn" id="copy-tunnel-btn" title="Copy URL">📋</button>
+        </div>
+    </div>
+
+    <!-- 2FA Security Card -->
+    <div class="card">
+        <div class="card-title">🔐 2FA Security</div>
+        <div class="card-note">
+            When enabled, users must authenticate with a TOTP code (from Apple Passwords, Google Authenticator, etc.)
+            before accessing the mobile UI. Disable for local-only access without authentication.
+        </div>
+        <div class="status-row">
+            <div class="status-info">
+                <div class="status-value">
+                    <div id="auth-dot" class="dot"></div>
+                    <span id="auth-status">Enabled</span>
+                </div>
+            </div>
+            <label class="switch">
+                <input type="checkbox" id="auth-toggle" checked>
+                <span class="slider"></span>
+            </label>
+        </div>
+        <div style="display: flex; gap: 8px; margin-top: 4px;">
+            <button class="action-btn" id="show-2fa-btn" style="font-size: 13px;">View QR Code / Secret</button>
+        </div>
+    </div>
+
+    <!-- 2FA Card -->
+    <div id="setup-2fa-container" class="card" style="display: none;">
+        <div class="card-title">🔐 2FA Setup</div>
+        <div class="card-note">
+            Scan this QR code with Apple Passwords, Google Authenticator, or any TOTP app. This protects your mobile
+            monitor from unauthorized access.
+        </div>
+        <div style="background: white; padding: 12px; border-radius: 8px; align-self: center; margin: 8px 0;">
+            <img id="qr-image" src="" alt="QR Code" style="display: block; width: 160px; height: 160px;">
+        </div>
+        <div class="url-box" style="color: var(--text);">
+            <span id="totp-secret" style="font-family: monospace;"></span>
+            <button class="copy-btn" id="copy-secret-btn" title="Copy Secret">📋</button>
+        </div>
+        <button class="action-btn" id="hide-2fa-btn"
+            style="background: var(--card-bg); border: 1px solid rgba(255,255,255,0.1);">Close Setup</button>
+    </div>
+
+    <!-- Quick Actions Card -->
+    <div class="card">
+        <div class="card-title">⚡ Quick Actions</div>
+        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+            <button class="action-btn" id="open-local-btn">Open Local UI</button>
+            <button class="action-btn" id="open-tunnel-btn" style="display: none;">Open Mobile UI</button>
+        </div>
+    </div>
+
+    <div class="footer">
+        Antigravity Shit-Chat v1.2.0
+    </div>
+
+    <script>
+        const vscode = acquireVsCodeApi();
+        let currentPort = 9420;
+
+        // Listen for messages from extension
+        window.addEventListener('message', event => {
+            const message = event.data;
+            switch (message.type) {
+                case 'status':
+                    updateUI(message.data);
+                    break;
+                case '2faData':
+                    show2FA(message.data);
+                    break;
+            }
+        });
+
+        function updateUI(data) {
+            const serverToggle = document.getElementById('server-toggle');
+            const serverStatus = document.getElementById('server-status');
+            const serverDot = document.getElementById('server-dot');
+            const tunnelToggle = document.getElementById('tunnel-toggle');
+            const tunnelStatus = document.getElementById('tunnel-status');
+            const tunnelDot = document.getElementById('tunnel-dot');
+            const localUrlContainer = document.getElementById('local-url-container');
+            const localUrl = document.getElementById('local-url');
+            const tunnelUrlContainer = document.getElementById('tunnel-url-container');
+            const tunnelUrl = document.getElementById('tunnel-url');
+            const openTunnelBtn = document.getElementById('open-tunnel-btn');
+            const portInput = document.getElementById('port-input');
+
+            // Update port if provided
+            if (data.port) {
+                currentPort = data.port;
+                portInput.value = data.port;
+            }
+
+            serverToggle.checked = data.serverRunning;
+            serverStatus.textContent = data.serverRunning ? 'Running' : 'Stopped';
+            serverDot.className = 'dot' + (data.serverRunning ? ' active' : '');
+
+            // Show local URL when server is running
+            if (data.serverRunning) {
+                localUrlContainer.style.display = 'flex';
+                const url = `http://localhost:${currentPort}`;
+                localUrl.textContent = url;
+                localUrl.href = url;
+            } else {
+                localUrlContainer.style.display = 'none';
+            }
+
+            tunnelToggle.checked = data.tunnelRunning;
+            tunnelStatus.textContent = data.tunnelRunning ? 'Connected' : 'Disconnected';
+            tunnelDot.className = 'dot' + (data.tunnelRunning ? ' active' : '');
+
+            // Show tunnel URL when connected
+            if (data.tunnelUrl && data.tunnelRunning) {
+                tunnelUrlContainer.style.display = 'flex';
+                tunnelUrl.textContent = data.tunnelUrl;
+                tunnelUrl.href = data.tunnelUrl;
+                openTunnelBtn.style.display = 'inline-block';
+            } else {
+                tunnelUrlContainer.style.display = 'none';
+                openTunnelBtn.style.display = 'none';
+            }
+
+            // Update 2FA status
+            const authToggle = document.getElementById('auth-toggle');
+            const authStatus = document.getElementById('auth-status');
+            const authDot = document.getElementById('auth-dot');
+            if (data.authEnabled !== undefined) {
+                authToggle.checked = data.authEnabled;
+                authStatus.textContent = data.authEnabled ? 'Enabled' : 'Disabled';
+                authDot.className = 'dot' + (data.authEnabled ? ' active' : '');
+            }
+        }
+
+        function show2FA(data) {
+            const container = document.getElementById('setup-2fa-container');
+            const qrImg = document.getElementById('qr-image');
+            const secret = document.getElementById('totp-secret');
+
+            qrImg.src = data.qr;
+            secret.textContent = data.secret;
+            container.style.display = 'flex';
+        }
+
+        // Event Listeners
+        document.getElementById('server-toggle').addEventListener('change', (e) => {
+            vscode.postMessage({ type: 'toggleServer', active: e.target.checked, port: currentPort });
+        });
+
+        document.getElementById('tunnel-toggle').addEventListener('change', (e) => {
+            vscode.postMessage({ type: 'toggleTunnel', active: e.target.checked });
+        });
+
+        document.getElementById('auth-toggle').addEventListener('change', (e) => {
+            vscode.postMessage({ type: 'toggle2FA', active: e.target.checked });
+        });
+
+        document.getElementById('apply-port-btn').addEventListener('click', () => {
+            const portInput = document.getElementById('port-input');
+            const newPort = parseInt(portInput.value, 10);
+            if (newPort >= 1024 && newPort <= 65535) {
+                currentPort = newPort;
+                vscode.postMessage({ type: 'setPort', port: newPort });
+            } else {
+                alert('Port must be between 1024 and 65535');
+            }
+        });
+
+        document.getElementById('show-2fa-btn').addEventListener('click', () => {
+            vscode.postMessage({ type: 'request2FA' });
+        });
+
+        document.getElementById('hide-2fa-btn').addEventListener('click', () => {
+            document.getElementById('setup-2fa-container').style.display = 'none';
+        });
+
+        document.getElementById('open-local-btn').addEventListener('click', () => {
+            vscode.postMessage({ type: 'openLocal' });
+        });
+
+        document.getElementById('open-tunnel-btn').addEventListener('click', () => {
+            vscode.postMessage({ type: 'openTunnel' });
+        });
+
+        document.getElementById('copy-local-btn').addEventListener('click', () => {
+            const url = document.getElementById('local-url').textContent;
+            vscode.postMessage({ type: 'copy', text: url });
+        });
+
+        document.getElementById('copy-tunnel-btn').addEventListener('click', () => {
+            const url = document.getElementById('tunnel-url').textContent;
+            vscode.postMessage({ type: 'copy', text: url });
+        });
+
+        document.getElementById('copy-secret-btn').addEventListener('click', () => {
+            const secret = document.getElementById('totp-secret').textContent;
+            vscode.postMessage({ type: 'copy', text: secret });
+        });
+
+        // Request initial status
+        vscode.postMessage({ type: 'requestStatus' });
+    </script>
+</body>
+
+</html>
