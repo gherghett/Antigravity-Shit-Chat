@@ -170,7 +170,39 @@ async function captureHTML(cdp) {
         const cascade = document.getElementById('cascade');
         if (!cascade) return { error: 'cascade not found' };
         
+        // Build a path for each button (without modifying original DOM)
+        function getPath(el, root) {
+            const path = [];
+            while (el && el !== root) {
+                const parent = el.parentElement;
+                if (!parent) break;
+                const idx = Array.from(parent.children).indexOf(el);
+                path.unshift(idx);
+                el = parent;
+            }
+            return path;
+        }
+        
+        const buttons = cascade.querySelectorAll('button');
+        const buttonMap = {};
+        
         const clone = cascade.cloneNode(true);
+        const cloneButtons = clone.querySelectorAll('button');
+        
+        // Tag buttons in CLONE only, store paths + text for originals
+        buttons.forEach((btn, i) => {
+            const id = 'btn-' + i;
+            const path = getPath(btn, cascade);
+            // Store path and text for verification during click
+            buttonMap[id] = { 
+                path: path, 
+                text: btn.textContent.trim().slice(0, 50) // First 50 chars for matching
+            };
+            if (cloneButtons[i]) {
+                cloneButtons[i].setAttribute('data-relay-id', id);
+            }
+        });
+        
         // Remove input box to keep snapshot clean
         const input = clone.querySelector('[contenteditable="true"]')?.closest('div[id^="cascade"] > div');
         if (input) input.remove();
@@ -179,6 +211,7 @@ async function captureHTML(cdp) {
 
         return {
             html: clone.outerHTML,
+            buttonMap: buttonMap,
             bodyBg: bodyStyles.backgroundColor,
             bodyColor: bodyStyles.color
         };
@@ -369,6 +402,25 @@ async function main() {
         else res.status(500).json(result);
     });
 
+    app.post('/click/:id', async (req, res) => {
+        const c = cascades.get(req.params.id);
+        if (!c) return res.status(404).json({ error: 'Cascade not found' });
+
+        const { relayId } = req.body;
+        const buttonInfo = c.snapshot?.buttonMap?.[relayId];
+
+        if (!buttonInfo) {
+            console.log(`Click in ${c.metadata.chatTitle}: relayId=${relayId} - not found in buttonMap`);
+            return res.status(404).json({ error: 'Button not found in snapshot', relayId });
+        }
+
+        console.log(`Click in ${c.metadata.chatTitle}: relayId=${relayId}, text="${buttonInfo.text}"`);
+
+        const result = await injectClick(c.cdp, buttonInfo.path, buttonInfo.text);
+        if (result.ok) res.json({ success: true });
+        else res.status(500).json(result);
+    });
+
 
     wss.on('connection', (ws) => {
         broadcastCascadeList(); // Send list on connect
@@ -417,6 +469,55 @@ async function injectMessage(cdp, text) {
              editor.dispatchEvent(new KeyboardEvent("keydown", { bubbles:true, key:"Enter" }));
         }
         return { ok: true };
+    })()`;
+
+    try {
+        const res = await cdp.call("Runtime.evaluate", {
+            expression: SCRIPT,
+            returnByValue: true,
+            contextId: cdp.rootContextId
+        });
+        return res.result?.value || { ok: false };
+    } catch (e) { return { ok: false, reason: e.message }; }
+}
+
+// Click relay helper - uses DOM path for precise identification + text verification
+async function injectClick(cdp, path, expectedText) {
+    const pathJson = JSON.stringify(path);
+    const escapedExpectedText = (expectedText || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+
+    const SCRIPT = `(() => {
+        const path = ${pathJson};
+        const expectedText = '${escapedExpectedText}';
+        
+        let el = document.getElementById('cascade');
+        if (!el) return { ok: false, reason: 'cascade not found' };
+        
+        // Navigate the path
+        for (const idx of path) {
+            if (!el.children || !el.children[idx]) {
+                return { ok: false, reason: 'path invalid', path: path, failedAt: idx };
+            }
+            el = el.children[idx];
+        }
+        
+        if (el.tagName !== 'BUTTON') {
+            return { ok: false, reason: 'element is not a button', tag: el.tagName };
+        }
+        
+        // Verify text content matches (first 50 chars)
+        const actualText = el.textContent.trim().slice(0, 50);
+        if (actualText !== expectedText) {
+            return { 
+                ok: false, 
+                reason: 'text mismatch - DOM may have changed', 
+                expected: expectedText, 
+                actual: actualText 
+            };
+        }
+        
+        el.click();
+        return { ok: true, clicked: el.tagName, text: actualText };
     })()`;
 
     try {

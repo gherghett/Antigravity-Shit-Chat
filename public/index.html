@@ -119,6 +119,11 @@
             color: #666;
             margin-top: 50px;
         }
+
+        /* Make buttons in chat content clickable */
+        .chat-content button {
+            cursor: pointer;
+        }
     </style>
     <style id="cascade-style">
         /* Dynamic styles will be injected here */
@@ -284,6 +289,38 @@
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
                 sendMessage();
+            }
+        });
+
+        // Relay button clicks back to Antigravity
+        chatContent.addEventListener('click', async (e) => {
+            const btn = e.target.closest('button');
+            if (!btn || !currentCascadeId) return;
+
+            const relayId = btn.getAttribute('data-relay-id');
+            if (!relayId) return; // Not a relayable button
+
+            e.preventDefault();
+            e.stopPropagation();
+
+            console.log('Relaying click:', relayId);
+
+            try {
+                const res = await fetch(`/click/${currentCascadeId}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ relayId })
+                });
+
+                if (!res.ok) {
+                    const err = await res.json();
+                    console.error('Click failed:', err);
+                }
+
+                // Refresh after click
+                setTimeout(() => updateContentOnly(currentCascadeId), 300);
+            } catch (err) {
+                console.error('Click relay error:', err);
             }
         });
 
